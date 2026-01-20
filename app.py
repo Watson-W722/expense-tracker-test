@@ -476,14 +476,13 @@ with st.sidebar:
         # 未來這裡可以改用 st.link_button 跳轉到綠界/Stripe 結帳頁面
         if st.button("💎 立即訂閱 VIP", type="primary", use_container_width=True):
             st.toast("💳 金流串接功能準備中，敬請期待！", icon="🚧")
-    
-    # 登出按鈕
+     # 登出按鈕
     st.divider()
     if st.button("🚪 登出"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.query_params.clear()
         st.rerun()
-        
+  
     st.info(f"日期：{today_date}")
     
 rates = get_exchange_rates()
