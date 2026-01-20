@@ -205,8 +205,6 @@ def login_flow():
             st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
         else:
             st.warning("⚠️ 系統尚未設定 Secrets，無法顯示機器人 Email")
-
-        st.markdown("---")
         st.markdown("**操作示意圖：**")
         
         # 圖片處理：
@@ -214,7 +212,7 @@ def login_flow():
         # 2. 只有使用者點擊展開時，才顯示完整寬度的圖片 (use_container_width=True)
         # 3. 這樣電腦版不會佔滿畫面，手機版點開後又能清晰查看
         if os.path.exists("guide.png"):
-            with st.expander("📷 點擊查看操作圖解 (點擊展開圖片)"):
+            with st.markdown("📷 點擊查看操作圖解 (點擊展開圖片)"):
                 st.image("guide.png", caption="請參照圖中紅框處共用給機器人", use_container_width=True)
         else:
             # 若無圖片，僅提示
