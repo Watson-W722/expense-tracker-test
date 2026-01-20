@@ -472,8 +472,7 @@ with st.sidebar:
 
     # 5. [新增] 付費訂閱按鈕 (僅限非 VIP 顯示)
     if plan != "VIP":
-        st.markdown("---")
-        st.markdown("##### 🚀 升級解鎖更多功能")
+        st.info("##### 🚀 升級持續使用")
         # 未來這裡可以改用 st.link_button 跳轉到綠界/Stripe 結帳頁面
         if st.button("💎 立即訂閱 VIP", type="primary", use_container_width=True):
             st.toast("💳 金流串接功能準備中，敬請期待！", icon="🚧")
