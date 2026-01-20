@@ -195,7 +195,7 @@ def login_flow():
         st.markdown(f"""
         **步驟 1：建立記帳本副本**  
         請點擊連結建立一份屬於您的 Google Sheet：  
-        👉 [**[點此建立記帳本副本]**]({TEMPLATE_URL})
+        👉 [**[點此建立記帳本副本（下載後可更名）]**]({TEMPLATE_URL})
         """)
         #st.markdown("---")        
         st.markdown("**步驟 2：共用權限給機器人**")
@@ -385,12 +385,18 @@ with st.sidebar:
     st.header("🌍 地區與帳號")
     user_info = st.session_state.get("user_info", {})
     plan = user_info.get("Plan", "Trial")
+    
+    # ======== 修改開始 ========
+    # 從 user_info 字典中讀取 Email，而不是讀取 st.session_state.user_email
+    current_email = user_info.get("Email", "訪客")
+    
     if plan == "VIP":
-        st.markdown(f"👤 **{st.session_state.user_email}** <span class='vip-badge'>VIP</span>", unsafe_allow_html=True)
+        st.markdown(f"👤 **{current_email}** <span class='vip-badge'>VIP</span>", unsafe_allow_html=True)
     else:
         expire = user_info.get("Expire_Date", "未知")
-        st.markdown(f"👤 **{st.session_state.user_email}** <span class='trial-badge'>{plan}</span>", unsafe_allow_html=True)
+        st.markdown(f"👤 **{current_email}** <span class='trial-badge'>{plan}</span>", unsafe_allow_html=True)
         st.caption(f"到期日: {expire}")
+    # ======== 修改結束 ========
     
     sheet_title = st.session_state.user_info.get("Sheet_Name", "未命名")
     st.success(f"📘 帳本：{sheet_title}")
