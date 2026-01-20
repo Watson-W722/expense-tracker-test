@@ -460,6 +460,9 @@ with st.sidebar:
             
         # 顯示標籤
         st.markdown(f"👤 **{nickname_display}** <span class='trial-badge'>{plan}</span>", unsafe_allow_html=True)
+
+        # 顯示帳本名稱
+        st.success(f"📘 帳本：{DISPLAY_TITLE}")
         
         # 顯示倒數天數
         if days_left > 0:
@@ -467,9 +470,6 @@ with st.sidebar:
             st.progress(min(days_left / 30, 1.0)) # 顯示進度條 (假設試用期30天)
         else:
             st.error(f"⛔ 試用期已結束 ({expire_str})")
-
-    # 4. 顯示帳本名稱
-    st.success(f"📘 帳本：{DISPLAY_TITLE}")
 
     # 5. [新增] 付費訂閱按鈕 (僅限非 VIP 顯示)
     if plan != "VIP":
