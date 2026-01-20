@@ -205,7 +205,7 @@ def login_flow():
             st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
         else:
             st.warning("⚠️ 系統尚未設定 Secrets，無法顯示機器人 Email")
-        with st. expandern("**操作示意圖：**"):
+        with st. expander("**操作示意圖：**"):
           # 圖片處理：
           # 1. 使用「內嵌 Expander」作為縮圖機制
           # 2. 只有使用者點擊展開時，才顯示完整寬度的圖片 (use_container_width=True)
