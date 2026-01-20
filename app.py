@@ -13,7 +13,7 @@ st.set_page_config(page_title="我的記帳本 Pro", layout="wide", page_icon="�
 # ==========================================
 # [設定區]
 # ==========================================
-TEMPLATE_URL = "https://docs.google.com/spreadsheets/d/14S2FBYHad_S1-CWoVKjdoTNVy9EVlisibsllCf4wUz0y/copy" 
+TEMPLATE_URL = "https://docs.google.com/spreadsheets/d/1j7WM4A6bgRr1S-0BvHYPw9Xp5oXs0Ikp969-Ys65JL0/copy" 
 TRIAL_DAYS = 30 
 
 # ==========================================
