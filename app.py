@@ -486,13 +486,7 @@ with st.sidebar:
         st.rerun()
         
     st.info(f"日期：{today_date}")
-        
-    st.divider()
-    tz_options = {"台灣/北京 (UTC+8)": 8, "日本/韓國 (UTC+9)": 9, "泰國 (UTC+7)": 7, "美東 (UTC-4)": -4, "歐洲 (UTC+1)": 1}
-    selected_tz_label = st.selectbox("當前位置時區", list(tz_options.keys()), index=0)
-    user_offset = tz_options[selected_tz_label]
-    st.info(f"日期：{get_user_date(user_offset)}")
-
+    
 rates = get_exchange_rates()
 
 # --- 讀取設定 ---
