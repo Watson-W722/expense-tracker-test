@@ -189,33 +189,33 @@ def login_flow():
             st.session_state.login_mode = "register"
             st.rerun()
 
-    with st.expander("如💡 新用戶請先設定您的記帳本"):
-                # st.info("")
-                st.markdown(f"[1. 點此下載範本]({TEMPLATE_URL})")
-                if "gcp_service_account" in st.secrets:
-                    st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
-    
     with st.container():
         email_input = st.text_input("Email", placeholder="name@example.com").strip()
         password_input = st.text_input("密碼", type="password", placeholder="設定您的密碼")
         
         if st.session_state.login_mode == "register":
-                        sheet_input = st.text_input("Google Sheet 網址/名稱")
+            st.info("💡 新用戶請先設定您的記帳本")
+            sheet_input = st.text_input("Google Sheet 網址/名稱")
             
-        if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
-          if email_input and password_input and sheet_input:
-              with st.spinner("註冊中..."):
-                  success, result = handle_user_login(email_input, password_input, sheet_input, is_register=True)
-                  if success:
-                      st.session_state.is_logged_in = True
-                      st.session_state.user_info = result
-                      st.success("註冊成功！")
-                      time.sleep(1)
-                      st.rerun()
-                  else:
-                      st.error(f"註冊失敗：{result}")
-          else:
-              st.warning("請填寫所有欄位")
+            with st.expander("如何取得 Google Sheet?"):
+                st.markdown(f"[1.點此下載範本]({TEMPLATE_URL})")
+                if "gcp_service_account" in st.secrets:
+                    st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
+
+            if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
+                if email_input and password_input and sheet_input:
+                    with st.spinner("註冊中..."):
+                        success, result = handle_user_login(email_input, password_input, sheet_input, is_register=True)
+                        if success:
+                            st.session_state.is_logged_in = True
+                            st.session_state.user_info = result
+                            st.success("註冊成功！")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(f"註冊失敗：{result}")
+                else:
+                    st.warning("請填寫所有欄位")
 
         else:
             if st.button("🚀 登入", type="primary", use_container_width=True):
