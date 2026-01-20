@@ -169,7 +169,7 @@ def handle_user_login(email, password, user_sheet_name=None, is_register=False):
         return False, f"Login Error: {e}"
 
 # ==========================================
-# 登入介面邏輯
+# 登入介面邏輯 (已修改)
 # ==========================================
 def login_flow():
     if "is_logged_in" in st.session_state and st.session_state.is_logged_in:
@@ -189,13 +189,35 @@ def login_flow():
             st.session_state.login_mode = "register"
             st.rerun()
     
-    
+    # ------------------ 修改開始: 設定說明區域 ------------------
     st.info("💡 新用戶請先設定您的記帳本")
-    with st.expander("💡 新用戶請先設定您的記帳本"):
-        st.markdown(f"[1. 點此下載範本]({TEMPLATE_URL})")
-        # st.markdonw(f"2. 共用給機器人：")
+    with st.expander("👉 點此查看設定步驟 (含圖文教學)"):
+        st.markdown(f"""
+        **步驟 1：建立記帳本副本**  
+        請點擊連結建立一份屬於您的 Google Sheet：  
+        👉 [**[點此建立記帳本副本]**]({TEMPLATE_URL})
+        """)
+        
+        st.markdown("---")
+        
+        st.markdown("**步驟 2：共用權限給機器人**")
+        st.write("請將您的記帳本「共用」給以下機器人 Email (權限設為 **編輯者/Editor**)，系統才能寫入資料。")
+        
         if "gcp_service_account" in st.secrets:
             st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
+        else:
+            st.warning("⚠️ 系統尚未設定 Secrets，無法顯示機器人 Email")
+
+        st.markdown("---")
+        st.markdown("**操作示意圖：**")
+        
+        # 顯示本地圖片 guide.png
+        # 記得要將您的截圖檔名改為 guide.png 並放在專案根目錄
+        if os.path.exists("guide.png"):
+            st.image("guide.png", caption="請參照圖中紅框處設定", use_container_width=True)
+        else:
+            st.caption("🚫 找不到 guide.png，請確認已將圖片上傳至專案資料夾。")
+    # ------------------ 修改結束 ------------------
 
     with st.container():
         email_input = st.text_input("Email", placeholder="name@example.com").strip()
