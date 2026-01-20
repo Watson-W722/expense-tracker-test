@@ -188,20 +188,21 @@ def login_flow():
         if st.button("註冊新帳號", use_container_width=True, type="primary" if st.session_state.login_mode == "register" else "secondary"):
             st.session_state.login_mode = "register"
             st.rerun()
+    
+    
+    with st.expander("💡 新用戶請先設定您的記帳本"):
+        st.markdown(f"[1.點此下載範本]({TEMPLATE_URL})")
+        if "gcp_service_account" in st.secrets:
+            st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
 
     with st.container():
         email_input = st.text_input("Email", placeholder="name@example.com").strip()
         password_input = st.text_input("密碼", type="password", placeholder="設定您的密碼")
         
         if st.session_state.login_mode == "register":
-            st.info("💡 新用戶請先設定您的記帳本")
+            # st.info("💡 新用戶請先設定您的記帳本")
             sheet_input = st.text_input("Google Sheet 網址/名稱")
             
-            with st.expander("如何取得 Google Sheet?"):
-                st.markdown(f"[1.點此下載範本]({TEMPLATE_URL})")
-                if "gcp_service_account" in st.secrets:
-                    st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
-
             if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
                 if email_input and password_input and sheet_input:
                     with st.spinner("註冊中..."):
