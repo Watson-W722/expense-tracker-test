@@ -190,9 +190,10 @@ def login_flow():
             st.rerun()
     
     
+    st.info("💡 新用戶請先設定您的記帳本")
     with st.expander("💡 新用戶請先設定您的記帳本"):
         st.markdown(f"[1. 點此下載範本]({TEMPLATE_URL})")
-        st.markdonw(f"2. 共用給機器人：")
+        # st.markdonw(f"2. 共用給機器人：")
         if "gcp_service_account" in st.secrets:
             st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
 
@@ -201,7 +202,6 @@ def login_flow():
         password_input = st.text_input("密碼", type="password", placeholder="設定您的密碼")
         
         if st.session_state.login_mode == "register":
-            # st.info("💡 新用戶請先設定您的記帳本")
             sheet_input = st.text_input("Google Sheet 網址/名稱")
             
             if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
