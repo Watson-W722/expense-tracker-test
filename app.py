@@ -28,7 +28,7 @@ st.markdown("""
         color: #2c3e50;
     }
     .block-container {
-        padding-top: 2rem !important;
+        padding-top: 4rem !important;
         padding-bottom: 5rem !important;
     }
     #MainMenu {visibility: hidden;}
@@ -55,7 +55,7 @@ st.markdown("""
     .val-green { color: #2ecc71; }
     .val-red { color: #e74c3c; }
     div.stButton > button { border-radius: 8px; font-weight: 600; }
-    .stTabs { position: sticky; top: 0; background-color: #f8f9fa; z-index: 999; padding-top: 10px; margin-top: -20px; }
+    .stTabs { position: relative; background-color: #f8f9fa; z-index: 990; padding-top: 10px;}
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] { background-color: white; border-radius: 8px 8px 0 0; border: 1px solid #dee2e6; border-bottom: none; }
     .stTabs [aria-selected="true"] { border-top: 3px solid #0d6efd; color: #0d6efd !important; }
@@ -95,6 +95,19 @@ def get_gspread_client():
             
     return gspread.authorize(creds)
 
+def get_sheet_title_safe(source_str):
+    """嘗試抓取 Google Sheet 的標題名稱"""
+    client = get_gspread_client()
+    try:
+        if source_str.startswith("http"):
+            sh = client.open_by_url(source_str)
+            return sh.title
+        else:
+            sh = client.open(source_str)
+            return sh.title
+    except:
+        return "我的記帳本" # 抓不到時的預設值
+
 def open_spreadsheet(client, source_str):
     if source_str.startswith("http"):
         return client.open_by_url(source_str)
@@ -107,7 +120,7 @@ def hash_password(password):
 # ==========================================
 # [核心] 使用者權限與訂閱管理
 # ==========================================
-def handle_user_login(email, password, user_sheet_name=None, is_register=False):
+def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_register=False):
     client = get_gspread_client()
     if not client: return False, "API Error (請檢查 Secrets)"
 
@@ -121,14 +134,26 @@ def handle_user_login(email, password, user_sheet_name=None, is_register=False):
         users_sheet = admin_book.worksheet("Users")
         records = users_sheet.get_all_records()
         df_users = pd.DataFrame(records)
+
+        # [修改 1] 定義 DataFrame 時加入 "Nickname"
+        if not records:
+            df_users = pd.DataFrame(columns=["Email", "Sheet_Name", "Join_Date", "Password_Hash", "Status", "Expire_Date", "Plan", "Nickname"])
+        else:
+            df_users = pd.DataFrame(records)
+            # 兼容舊資料：如果舊資料沒 Nickname 欄位，補上空白
+            if "Nickname" not in df_users.columns:
+                df_users["Nickname"] = ""
         
         user_row = df_users[df_users["Email"] == email]
         pwd_hash = hash_password(password)
         today = datetime.now().date()
-
+        
         if user_row.empty:
             if is_register:
                 expire_date = today + timedelta(days=TRIAL_DAYS)
+
+                # [修改 2] 處理暱稱邏輯
+                final_nickname = nickname if nickname else email.split("@")[0]
                 new_user = {
                     "Email": email,
                     "Sheet_Name": user_sheet_name if user_sheet_name else "",
@@ -136,18 +161,30 @@ def handle_user_login(email, password, user_sheet_name=None, is_register=False):
                     "Password_Hash": pwd_hash,
                     "Status": "Active",
                     "Expire_Date": str(expire_date),
-                    "Plan": "Trial"
-                }
+                    "Plan": "Trial",
+                    "Nickname": final_nickname # 加入這行
+                } 
+                # [修改 3] 寫入資料庫時加入 Nickname
                 row_data = [
                     new_user["Email"], new_user["Sheet_Name"], new_user["Join_Date"], 
-                    new_user["Password_Hash"], new_user["Status"], new_user["Expire_Date"], new_user["Plan"]
+                    new_user["Password_Hash"], new_user["Status"], new_user["Expire_Date"], new_user["Plan"],
+                    new_user["Plan"], new_user["Nickname"] # 加入這行
                 ]
-                users_sheet.append_row(row_data)
+
+                # [修改 4] 防呆：如果資料庫還沒加 H 欄，怕寫入失敗，做個 try-catch
+                try:
+                    users_sheet.append_row(row_data)
+                except:
+                    users_sheet.append_row(row_data[:-1])
+                    
                 return True, new_user
             else:
                 return False, "User not found"
         else:
+            # [修改 5] 登入成功時，如果資料庫的 Nickname 是空的，暫時用 Email 前綴代替
             user_info = user_row.iloc[0].to_dict()
+            if pd.isna(user_info.get("Nickname")) or user_info.get("Nickname") == "":
+                user_info["Nickname"] = email.split("@")[0]
             stored_hash = str(user_info.get("Password_Hash", ""))
             
             if stored_hash != pwd_hash:
@@ -173,7 +210,12 @@ def handle_user_login(email, password, user_sheet_name=None, is_register=False):
 # ==========================================
 def login_flow():
     if "is_logged_in" in st.session_state and st.session_state.is_logged_in:
-        return st.session_state.user_info["Sheet_Name"], "我的記帳本"
+        # [修改 1] 登入後，抓取真正的帳本標題並存起來
+        if "real_book_title" not in st.session_state:
+            with st.spinner("載入帳本中..."):
+                st.session_state.real_book_title = get_sheet_title_safe(st.session_state.user_info["Sheet_Name"])
+        # 回傳真正的標題
+        return st.session_state.user_info["Sheet_Name"], st.session_state.real_book_title
 
     if "login_mode" not in st.session_state: st.session_state.login_mode = "login"
 
@@ -223,11 +265,15 @@ def login_flow():
         password_input = st.text_input("密碼", type="password", placeholder="設定您的密碼")
         
         if st.session_state.login_mode == "register":
-            sheet_input = st.text_input("Google Sheet 網址/名稱")
+            # [修改 2] 新增暱稱輸入框
+            nickname_input = st.text_input("您的暱稱 (顯示在側邊欄)", placeholder="例如：小明")
+            sheet_input = st.text_input("Google Sheet 網址")
             
-            if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
-                if email_input and password_input and sheet_input:
-                    with st.spinner("註冊中..."):
+            if st.button("✨ 註冊並登入", ...):
+                # [修改 3] 傳入 nickname 參數
+                if email_input and password_input and sheet_input and nickname_input:
+                     success, result = handle_user_login(..., nickname=nickname_input, is_register=True)
+                with st.spinner("註冊中..."):
                         success, result = handle_user_login(email_input, password_input, sheet_input, is_register=True)
                         if success:
                             st.session_state.is_logged_in = True
@@ -380,31 +426,66 @@ def calculate_exchange(amount, input_currency, target_currency, rates):
         return round(exchanged_amount, 2), conversion_factor
     except: return amount, 0
 
-# --- 側邊欄 ---
+# --- 側邊欄 (已新增倒數天數與付費按鈕) ---
 with st.sidebar:
     st.header("🌍 地區與帳號")
     user_info = st.session_state.get("user_info", {})
     plan = user_info.get("Plan", "Trial")
     
-    # ======== 修改開始 ========
-    # 從 user_info 字典中讀取 Email，而不是讀取 st.session_state.user_email
-    current_email = user_info.get("Email", "訪客")
+    # 1. 處理顯示名稱 (暱稱 > Email 前綴)
+    nickname_display = user_info.get("Nickname", "")
+    if not nickname_display:
+        nickname_display = user_info.get("Email", "訪客").split("@")[0]
     
+    # 2. 準備日期計算 (為了倒數天數)
+    tz_options = {"台灣/北京 (UTC+8)": 8, "日本/韓國 (UTC+9)": 9, "泰國 (UTC+7)": 7, "美東 (UTC-4)": -4, "歐洲 (UTC+1)": 1}
+    # 這裡預設先抓台灣時間，稍後使用者選單切換時會更新下面的 info
+    selected_tz_label = st.selectbox("當前位置時區", list(tz_options.keys()), index=0)
+    user_offset = tz_options[selected_tz_label]
+    today_date = get_user_date(user_offset)
+
+    # 3. 顯示使用者狀態與倒數邏輯
     if plan == "VIP":
-        st.markdown(f"👤 **{current_email}** <span class='vip-badge'>VIP</span>", unsafe_allow_html=True)
+        st.markdown(f"👤 **{nickname_display}** <span class='vip-badge'>VIP</span>", unsafe_allow_html=True)
+        st.caption("✨ 您擁有完整功能權限")
     else:
-        expire = user_info.get("Expire_Date", "未知")
-        st.markdown(f"👤 **{current_email}** <span class='trial-badge'>{plan}</span>", unsafe_allow_html=True)
-        st.caption(f"到期日: {expire}")
-    # ======== 修改結束 ========
+        # Trial 或是其他狀態
+        expire_str = user_info.get("Expire_Date", str(today_date))
+        try:
+            expire_dt = datetime.strptime(expire_str, "%Y-%m-%d").date()
+            days_left = (expire_dt - today_date).days
+        except:
+            days_left = 0
+            
+        # 顯示標籤
+        st.markdown(f"👤 **{nickname_display}** <span class='trial-badge'>{plan}</span>", unsafe_allow_html=True)
+        
+        # 顯示倒數天數
+        if days_left > 0:
+            st.caption(f"⏳ 試用倒數：**{days_left}** 天 ({expire_str})")
+            st.progress(min(days_left / 30, 1.0)) # 顯示進度條 (假設試用期30天)
+        else:
+            st.error(f"⛔ 試用期已結束 ({expire_str})")
+
+    # 4. 顯示帳本名稱
+    st.success(f"📘 帳本：{DISPLAY_TITLE}")
+
+    # 5. [新增] 付費訂閱按鈕 (僅限非 VIP 顯示)
+    if plan != "VIP":
+        st.markdown("---")
+        st.markdown("##### 🚀 升級解鎖更多功能")
+        # 未來這裡可以改用 st.link_button 跳轉到綠界/Stripe 結帳頁面
+        if st.button("💎 立即訂閱 VIP", type="primary", use_container_width=True):
+            st.toast("💳 金流串接功能準備中，敬請期待！", icon="🚧")
     
-    sheet_title = st.session_state.user_info.get("Sheet_Name", "未命名")
-    st.success(f"📘 帳本：{sheet_title}")
-    
+    # 登出按鈕
+    st.divider()
     if st.button("🚪 登出"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.query_params.clear()
         st.rerun()
+        
+    st.info(f"日期：{today_date}")
         
     st.divider()
     tz_options = {"台灣/北京 (UTC+8)": 8, "日本/韓國 (UTC+9)": 9, "泰國 (UTC+7)": 7, "美東 (UTC-4)": -4, "歐洲 (UTC+1)": 1}
