@@ -192,7 +192,7 @@ def login_flow():
     
     with st.expander("💡 新用戶請先設定您的記帳本"):
         st.markdown(f"[1. 點此下載範本]({TEMPLATE_URL})")
-        st.markdonw(F"2. 共用給機器人：")
+        st.markdonw(f"2. 共用給機器人：")
         if "gcp_service_account" in st.secrets:
             st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
 
