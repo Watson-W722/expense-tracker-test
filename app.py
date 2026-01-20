@@ -443,6 +443,7 @@ with st.sidebar:
     selected_tz_label = st.selectbox("當前位置時區", list(tz_options.keys()), index=0)
     user_offset = tz_options[selected_tz_label]
     today_date = get_user_date(user_offset)
+    st.info(f"日期：{today_date}")
 
     # 3. 顯示使用者狀態與倒數邏輯
     if plan == "VIP":
@@ -483,7 +484,6 @@ with st.sidebar:
         st.query_params.clear()
         st.rerun()
   
-    st.info(f"日期：{today_date}")
     
 rates = get_exchange_rates()
 
