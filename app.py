@@ -283,8 +283,8 @@ def login_flow():
                             st.rerun()
                         else:
                             st.error(f"註冊失敗：{result}")
-                else:
-                    st.warning("請填寫所有欄位")
+            else:
+                st.warning("請填寫所有欄位")
 
         else:
             if st.button("🚀 登入", type="primary", use_container_width=True):
