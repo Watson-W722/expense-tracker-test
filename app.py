@@ -10,6 +10,7 @@ import smtplib
 from email.mime.text import MIMEText
 import random
 import string
+import re
 
 # --- 頁面設定 ---
 st.set_page_config(page_title="我的記帳本 Pro", layout="wide", page_icon="💰")
@@ -111,13 +112,27 @@ def get_sheet_title_safe(source_str):
 def hash_password(password):
     return hashlib.sha256(str(password).encode('utf-8')).hexdigest()
 
+def is_valid_email(email):
+    """檢查 Email 格式是否有效"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+def mask_email(email):
+    """隱私處理：workcipher@gmail.com -> wor***@gmail.com"""
+    try:
+        if "@" not in email: return email
+        name, domain = email.split("@")
+        if len(name) <= 3: return f"{name[0]}***@{domain}"
+        return f"{name[:3]}***@{domain}"
+    except: return "******"
+
 # --- Email 相關函式 ---
-def send_otp_email(to_email, code):
+def send_otp_email(to_email, code, subject="【記帳本】驗證碼"):
     if "email" not in st.secrets: return False, "尚未設定 Email Secrets"
     sender = st.secrets["email"]["sender"]
     pwd = st.secrets["email"]["password"]
-    msg = MIMEText(f"【記帳本】密碼重設驗證碼：{code}\n\n請在頁面上輸入此驗證碼以重設密碼。")
-    msg['Subject'] = "記帳本驗證碼"
+    msg = MIMEText(f"{subject}：{code}\n\n請在頁面上輸入此驗證碼以完成操作。")
+    msg['Subject'] = subject
     msg['From'] = sender
     msg['To'] = to_email
     try:
@@ -135,13 +150,12 @@ def reset_user_password(email, new_password):
         cell = users_sheet.find(email)
         if not cell: return False, "找不到使用者"
         new_hash = hash_password(new_password)
-        # 假設 Password_Hash 在第 4 欄 (D)
         users_sheet.update_cell(cell.row, 4, new_hash)
         return True, "密碼更新成功"
     except Exception as e: return False, f"資料庫錯誤: {e}"
 
 # ==========================================
-# [核心] 使用者與多帳本管理 (含防呆邏輯修正)
+# [核心] 使用者與多帳本管理
 # ==========================================
 def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_register=False):
     client = get_gspread_client()
@@ -152,8 +166,6 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
     try:
         admin_book = client.open_by_url(admin_url)
         users_sheet = admin_book.worksheet("Users")
-        
-        # 處理 Book_Bindings
         try: bindings_sheet = admin_book.worksheet("Book_Bindings")
         except: bindings_sheet = admin_book.add_worksheet("Book_Bindings", 100, 4); bindings_sheet.append_row(["Email", "Sheet_URL", "Book_Name", "Owner"])
         
@@ -170,86 +182,55 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
 
         # ---------------- 註冊模式邏輯 ----------------
         if is_register:
-            # 1. 檢查該帳本是否已被其他人綁定 (防呆 Req 1)
+            # [Req 1] 如果帳號已存在 (無論是自己註冊過，還是被邀請過)，都阻擋
+            if not user_row.empty:
+                return False, "❌ 此 Email 已存在系統中（可能已被邀請或註冊）。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。"
+
+            # [Check] 檢查帳本是否已被綁定
             b_records = bindings_sheet.get_all_records()
             df_bind = pd.DataFrame(b_records)
             
             if not df_bind.empty and "Sheet_URL" in df_bind.columns:
-                # 找出是否有這本帳本的紀錄
                 conflict = df_bind[df_bind["Sheet_URL"] == user_sheet_name]
                 if not conflict.empty:
-                    # 如果擁有者不是現在註冊這個人
                     owner_email = conflict.iloc[0]["Email"]
                     if owner_email != email:
-                        return False, f"❌ 此帳本已被 {owner_email} 綁定。請聯繫該擁有者邀請您加入 (勿重複註冊)。"
+                        owner_nickname = ""
+                        try:
+                            o_row = df_users[df_users["Email"] == owner_email]
+                            if not o_row.empty: owner_nickname = o_row.iloc[0]["Nickname"]
+                        except: pass
+                        display_name = owner_nickname if owner_nickname else mask_email(owner_email)
+                        return False, f"❌ 此帳本已被 **{display_name}** 綁定。請聯繫該擁有者邀請您加入 (勿重複註冊)。"
 
-            # 2. 檢查使用者是否存在
-            if not user_row.empty:
-                # (防呆 Req 2) 帳號已存在，檢查密碼是否正確
-                user_info = user_row.iloc[0].to_dict()
-                stored_hash = str(user_info.get("Password_Hash", ""))
-                
-                if stored_hash != pwd_hash:
-                    return False, "❌ 帳號已存在，但密碼錯誤。無法為您綁定新帳本。"
-                
-                # 密碼正確，檢查是否已經綁定過這本
-                current_binds = df_bind[df_bind["Email"] == email]
-                if user_sheet_name in current_binds["Sheet_URL"].values:
-                    return False, "⚠️ 您已經綁定過這本帳本了，請直接登入。"
-                
-                # 新增綁定 (視為舊帳號加新書)
-                book_title = get_sheet_title_safe(user_sheet_name)
-                bindings_sheet.append_row([email, user_sheet_name, book_title, "Owner"])
-                
-                # 重新載入使用者的綁定列表，讓登入後的狀態是最新的
-                count_books = len(current_binds) + 1
-                msg = f"✅ 歡迎回來！您已有 {len(current_binds)} 本帳本，已為您新增此帳本並自動登入。"
-                
-                # 為了讓下方登入邏輯跑到，我們這裡直接繼續執行登入流程
-                # 但要先更新 Session 提示訊息
-                st.toast(msg, icon="📚")
+            # 執行註冊
+            expire_date = today + timedelta(days=TRIAL_DAYS)
+            final_nickname = nickname if nickname else email.split("@")[0]
             
-            else:
-                # 完全新帳號註冊
-                expire_date = today + timedelta(days=TRIAL_DAYS)
-                final_nickname = nickname if nickname else email.split("@")[0]
-                
-                new_user = {
-                    "Email": email,
-                    "Sheet_Name": user_sheet_name,
-                    "Join_Date": str(today),
-                    "Password_Hash": pwd_hash,
-                    "Status": "Active",
-                    "Expire_Date": str(expire_date),
-                    "Plan": "Trial",
-                    "Nickname": final_nickname
-                }
-                
-                # 寫入 Users
-                row_data = [
-                    new_user["Email"], new_user["Sheet_Name"], new_user["Join_Date"], 
-                    new_user["Password_Hash"], new_user["Status"], new_user["Expire_Date"], 
-                    new_user["Plan"], new_user["Nickname"]
-                ]
-                users_sheet.append_row(row_data)
-                
-                # 寫入 Bindings
-                book_title = get_sheet_title_safe(user_sheet_name)
-                bindings_sheet.append_row([email, user_sheet_name, book_title, "Owner"])
-                
-                return True, new_user
+            new_user = {
+                "Email": email, "Sheet_Name": user_sheet_name, "Join_Date": str(today),
+                "Password_Hash": pwd_hash, "Status": "Active", "Expire_Date": str(expire_date),
+                "Plan": "Trial", "Nickname": final_nickname
+            }
+            row_data = [
+                new_user["Email"], new_user["Sheet_Name"], new_user["Join_Date"], 
+                new_user["Password_Hash"], new_user["Status"], new_user["Expire_Date"], 
+                new_user["Plan"], new_user["Nickname"]
+            ]
+            users_sheet.append_row(row_data)
+            
+            book_title = get_sheet_title_safe(user_sheet_name)
+            bindings_sheet.append_row([email, user_sheet_name, book_title, "Owner"])
+            
+            return True, new_user
 
         # ---------------- 登入模式邏輯 ----------------
-        # 重新讀取使用者資料 (因為上面可能剛寫入)
-        # 這裡為了效能，如果剛剛是新註冊，就不重讀，如果是舊帳號加新書，重讀一次
-        if is_register: 
-             # 簡單處理：直接用 user_row 或新資料構造 user_info，這裡為了保險起見，重新 fetch 一次
+        if is_register: # 若剛註冊完，資料庫已更新，這裡簡單重抓一次
              records = users_sheet.get_all_records()
              df_users = pd.DataFrame(records)
              user_row = df_users[df_users["Email"] == email]
 
-        if user_row.empty:
-            return False, "User not found"
+        if user_row.empty: return False, "User not found"
 
         user_info = user_row.iloc[0].to_dict()
         stored_hash = str(user_info.get("Password_Hash", ""))
@@ -260,8 +241,7 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
         if pd.isna(user_info.get("Nickname")) or user_info.get("Nickname") == "":
             user_info["Nickname"] = email.split("@")[0]
 
-        # [多帳本邏輯] 撈取綁定
-        # 重新撈取 Bindings (因為可能剛新增)
+        # 撈取綁定
         b_records = bindings_sheet.get_all_records()
         df_bind = pd.DataFrame(b_records)
         user_books = df_bind[df_bind["Email"] == email]
@@ -269,9 +249,6 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
         books_list = []
         if not user_books.empty:
             for _, row in user_books.iterrows():
-                # 這裡多存一個 Role，以便之後判斷權限
-                role = row.get("Owner", "Member") # 舊資料可能欄位名不同，這裡假設欄位4是Owner/Role
-                # 根據之前建立的標題: Email, Sheet_URL, Book_Name, Owner(Role)
                 books_list.append({"name": row["Book_Name"], "url": row["Sheet_URL"], "role": row.get("Owner", "Member")})
         else:
             books_list.append({"name": "我的記帳本", "url": user_info.get("Sheet_Name", ""), "role": "Owner"})
@@ -279,25 +256,21 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
         user_info["Books"] = books_list
         
         if user_info["Plan"] == "VIP": return True, user_info
-        
         try:
             expire_dt = datetime.strptime(user_info["Expire_Date"], "%Y-%m-%d").date()
             if today > expire_dt: return False, "Expired"
             else: return True, user_info
         except: return False, "Date Error"
 
-    except Exception as e:
-        return False, f"Login Error: {e}"
+    except Exception as e: return False, f"Login Error: {e}"
 
 def add_binding(target_email, sheet_url, book_name, role="Member"):
-    """新增使用者與帳本的綁定，若使用者不存在則建立空帳號"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
         users_sheet = admin_book.worksheet("Users")
         bindings_sheet = admin_book.worksheet("Book_Bindings")
         
-        # 1. 檢查使用者是否存在
         try: cell = users_sheet.find(target_email)
         except: cell = None
 
@@ -306,21 +279,18 @@ def add_binding(target_email, sheet_url, book_name, role="Member"):
             row = [target_email, "", today, "RESET_REQUIRED", "Pending", today, "Trial", target_email.split("@")[0]]
             users_sheet.append_row(row)
         
-        # 2. 檢查是否已經綁定
         existing = bindings_sheet.get_all_records()
         df = pd.DataFrame(existing)
         if not df.empty:
             check = df[(df["Email"] == target_email) & (df["Sheet_URL"] == sheet_url)]
             if not check.empty: return True, "使用者已在此帳本中"
 
-        # 3. 新增綁定
         bindings_sheet.append_row([target_email, sheet_url, book_name, role])
         return True, "邀請成功！請通知對方使用「忘記密碼」設定帳戶"
-    except Exception as e:
-        return False, f"Error: {e}"
+    except Exception as e: return False, f"Error: {e}"
 
 # ==========================================
-# 登入流程
+# 登入流程 (含 OTP 註冊驗證)
 # ==========================================
 def login_flow():
     if "is_logged_in" in st.session_state and st.session_state.is_logged_in:
@@ -336,8 +306,12 @@ def login_flow():
 
     if "login_mode" not in st.session_state: st.session_state.login_mode = "login"
     if "reset_stage" not in st.session_state: st.session_state.reset_stage = 1
+    if "reg_stage" not in st.session_state: st.session_state.reg_stage = 1 # 1: Input, 2: OTP
     if "otp_code" not in st.session_state: st.session_state.otp_code = ""
     if "reset_email" not in st.session_state: st.session_state.reset_email = ""
+    
+    # 用於暫存註冊資訊
+    if "reg_data" not in st.session_state: st.session_state.reg_data = {}
 
     st.markdown("""<div class="login-container"><h2>👋 歡迎使用記帳本</h2>""", unsafe_allow_html=True)
     
@@ -345,6 +319,9 @@ def login_flow():
         if st.button("⬅️ 返回登入", use_container_width=True):
             st.session_state.login_mode = "login"; st.rerun()
         st.markdown("#### 🔒 重設密碼")
+    elif st.session_state.login_mode == "register":
+         if st.button("⬅️ 返回登入", use_container_width=True):
+            st.session_state.login_mode = "login"; st.rerun()
     else:
         c1, c2 = st.columns(2)
         with c1:
@@ -352,9 +329,10 @@ def login_flow():
                 st.session_state.login_mode = "login"; st.rerun()
         with c2:
             if st.button("註冊", use_container_width=True, type="primary" if st.session_state.login_mode == "register" else "secondary"):
-                st.session_state.login_mode = "register"; st.rerun()
+                st.session_state.login_mode = "register"; st.session_state.reg_stage = 1; st.rerun()
 
     with st.container():
+        # === 忘記密碼 ===
         if st.session_state.login_mode == "reset":
             if st.session_state.reset_stage == 1:
                 st.info("請輸入 Email，我們將發送驗證碼給您。")
@@ -379,34 +357,80 @@ def login_flow():
                         else: st.error(msg)
                     else: st.error("驗證碼錯誤或密碼為空")
 
+        # === 註冊 (含 OTP) ===
         elif st.session_state.login_mode == "register":
-            st.info("💡 新用戶請先設定您的記帳本")
-            with st.expander("👉 點此查看設定步驟 (含圖文教學)"):
-                st.markdown(f"**步驟 1：建立記帳本副本** 👉 [**[點此建立]**]({TEMPLATE_URL})")
-                st.markdown("---")        
-                st.markdown("**步驟 2：共用權限給機器人**")
-                st.write("請共用給以下 Email (權限設為 **編輯者/Editor**)")
-                if "gcp_service_account" in st.secrets:
-                    st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
-                st.markdown("---")
-                if os.path.exists("guide.png"):
-                    with st.expander("📷 操作示意圖"):
-                        st.image("guide.png", caption="共用設定示意圖", use_container_width=True)
+            if st.session_state.reg_stage == 1:
+                st.info("💡 新用戶請先設定您的記帳本 (需 Email 驗證)")
+                with st.expander("👉 點此查看設定步驟 (含圖文教學)"):
+                    st.markdown(f"**步驟 1：建立記帳本副本** 👉 [**[點此建立]**]({TEMPLATE_URL})")
+                    st.markdown("---")        
+                    st.markdown("**步驟 2：共用權限給機器人**")
+                    st.write("請共用給以下 Email (權限設為 **編輯者/Editor**)")
+                    if "gcp_service_account" in st.secrets:
+                        st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
+                    st.markdown("---")
+                    if os.path.exists("guide.png"):
+                        with st.expander("📷 操作示意圖"): st.image("guide.png", caption="共用設定示意圖", use_container_width=True)
 
-            email_in = st.text_input("Email", key="reg_email").strip()
-            pwd_in = st.text_input("密碼", type="password", key="reg_pwd")
-            nick_in = st.text_input("暱稱 (用於交易記錄)", key="reg_nick")
-            sheet_in = st.text_input("Google Sheet 網址", key="reg_sheet")
+                email_in = st.text_input("Email", key="reg_email").strip()
+                pwd_in = st.text_input("密碼", type="password", key="reg_pwd")
+                nick_in = st.text_input("暱稱 (用於交易記錄)", key="reg_nick")
+                sheet_in = st.text_input("Google Sheet 網址", key="reg_sheet")
+                
+                if st.button("📩 驗證 Email 並下一步", type="primary", use_container_width=True):
+                    if email_in and pwd_in and sheet_in and nick_in:
+                        if not is_valid_email(email_in):
+                            st.error("❌ Email 格式不正確")
+                        else:
+                            st.cache_data.clear() # 清快取
+                            # 先做初步檢查：Email 是否已存在？ (Reuse logic inside handle_user_login dry run)
+                            # 為了不重複寫 code，我們用一個簡單查詢
+                            client = get_gspread_client()
+                            try:
+                                book = client.open_by_url(st.secrets["admin_sheet_url"])
+                                sheet = book.worksheet("Users")
+                                if sheet.find(email_in):
+                                    st.error("❌ 此 Email 已存在系統中。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。")
+                                else:
+                                    # 通過檢查，發送 OTP
+                                    code = ''.join(random.choices(string.digits, k=6))
+                                    st.session_state.otp_code = code
+                                    # 暫存資料
+                                    st.session_state.reg_data = {
+                                        "email": email_in, "pwd": pwd_in, "nick": nick_in, "sheet": sheet_in
+                                    }
+                                    with st.spinner("寄送驗證碼中..."):
+                                        ok, msg = send_otp_email(email_in, code, subject="【記帳本】註冊驗證碼")
+                                        if ok:
+                                            st.session_state.reg_stage = 2
+                                            st.success("✅ 驗證碼已發送！"); time.sleep(1); st.rerun()
+                                        else: st.error(msg)
+                            except Exception as e: st.error(f"系統檢查失敗: {e}")
+                    else: st.warning("請填寫所有欄位")
             
-            if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
-                if email_in and pwd_in and sheet_in and nick_in:
-                    with st.spinner("註冊中..."):
-                        success, result = handle_user_login(email_in, pwd_in, sheet_in, nickname=nick_in, is_register=True)
-                        if success:
-                            st.session_state.is_logged_in = True; st.session_state.user_info = result; st.success("註冊/登入成功！"); time.sleep(1); st.rerun()
-                        else: st.error(f"失敗：{result}")
-                else: st.warning("請填寫所有欄位")
+            elif st.session_state.reg_stage == 2:
+                reg_d = st.session_state.reg_data
+                st.success(f"驗證碼已發送至：{reg_d['email']}")
+                otp_input = st.text_input("輸入 6 位數驗證碼", key="reg_otp_input")
+                
+                if st.button("✨ 確認註冊", type="primary", use_container_width=True):
+                    if otp_input == st.session_state.otp_code:
+                        with st.spinner("建立帳戶中..."):
+                            success, result = handle_user_login(
+                                reg_d["email"], reg_d["pwd"], reg_d["sheet"], 
+                                nickname=reg_d["nick"], is_register=True
+                            )
+                            if success:
+                                st.session_state.is_logged_in = True
+                                st.session_state.user_info = result
+                                st.success("註冊成功！歡迎使用"); time.sleep(1); st.rerun()
+                            else: st.error(f"註冊失敗：{result}")
+                    else: st.error("❌ 驗證碼錯誤")
+                
+                if st.button("返回修改資料"):
+                    st.session_state.reg_stage = 1; st.rerun()
 
+        # === 登入 ===
         else:
             email_in = st.text_input("Email", key="login_email").strip()
             pwd_in = st.text_input("密碼", type="password", key="login_pwd")
@@ -424,14 +448,13 @@ def login_flow():
 
 CURRENT_SHEET_SOURCE, DISPLAY_TITLE = login_flow()
 
-# ============ 補上 Header ============
+# ============ Header ============
 c_logo, c_title = st.columns([1, 15]) 
 with c_logo:
     if os.path.exists("logo.png"): st.image("logo.png", width=60) 
     else: st.write("💰")
 with c_title:
     st.markdown("<h2 style='margin-bottom: 0; padding-top: 10px;'>我的記帳本</h2>", unsafe_allow_html=True)
-# ====================================
 
 # ... (Get Data Functions) ...
 @st.cache_data(ttl=300)
@@ -730,6 +753,14 @@ with tab2:
             if "Recorder" in md.columns: cols_show.append("Recorder")
             st.dataframe(md[cols_show].sort_values(by='Date', ascending=False), use_container_width=True)
 
+        ed = md[md['Type']!='收入']
+        if not ed.empty:
+            pd_pie = ed.groupby("Main_Category")["Amount_Def"].sum().reset_index()
+            pd_pie = pd_pie[pd_pie["Amount_Def"]>0]
+            if not pd_pie.empty:
+                fig_pie = px.pie(pd_pie, values="Amount_Def", names="Main_Category", hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
+                st.plotly_chart(fig_pie, use_container_width=True)
+
 with tab3:
     st.markdown("##### ⚙️ 系統資料庫")
     if 'temp_cat_map' not in st.session_state: st.session_state.temp_cat_map = cat_mapping
@@ -737,17 +768,13 @@ with tab3:
     if 'temp_curr_list' not in st.session_state: st.session_state.temp_curr_list = currency_list_custom
     if 'temp_default_curr' not in st.session_state: st.session_state.temp_default_curr = default_currency_setting
 
-    # (Req 3) 系統設定顯示綁定列表
     with st.expander("📚 帳本與成員管理", expanded=True):
         st.caption(f"當前帳本：{DISPLAY_TITLE}")
         
-        # 顯示目前使用者擁有的所有帳本
         user_books = st.session_state.user_info.get("Books", [])
         if user_books:
             st.markdown("###### 📋 您已綁定的帳本")
-            # 轉換為 DataFrame 顯示，比較好看
             df_books_display = pd.DataFrame(user_books)
-            # 重新命名欄位顯示
             df_books_display = df_books_display.rename(columns={"name": "帳本名稱", "role": "您的權限", "url": "帳本網址"})
             st.dataframe(df_books_display, use_container_width=True, hide_index=True)
         
@@ -768,10 +795,8 @@ with tab3:
                 new_book_name = st.text_input("帳本名稱")
                 if st.button("確認綁定"):
                     if new_sheet_url and new_book_name:
-                        # 使用者主動綁定新帳本，視為 Owner
                         ok, msg = add_binding(st.session_state.user_info["Email"], new_sheet_url, new_book_name, "Owner")
-                        if ok: 
-                            st.success("綁定成功！請重新登入生效"); time.sleep(2); st.cache_data.clear(); st.rerun()
+                        if ok: st.success("綁定成功！請重新登入生效"); time.sleep(2); st.cache_data.clear(); st.rerun()
                         else: st.error(msg)
     
     with st.expander("🔄 每月固定收支"):
