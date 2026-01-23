@@ -363,8 +363,7 @@ def login_flow():
                 請點擊連結建立一份屬於您的 Google Sheet：  
                 👉 [**[點此建立記帳本副本（下載後可更名）]**]({TEMPLATE_URL})
                 """)
-                
-                st.markdown("---")        
+                 # st.markdown("---")        
                 st.markdown("**步驟 2：共用權限給機器人**")
                 st.write("請將您的記帳本「共用」給以下機器人 Email (權限設為 **編輯者/Editor**)，系統才能寫入資料。")
                 
@@ -372,8 +371,7 @@ def login_flow():
                     st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
                 else:
                     st.warning("⚠️ 系統尚未設定 Secrets，無法顯示機器人 Email")
-                    
-                st.markdown("---")
+                # st.markdown("---")    
                 
                 # 圖片處理
                 if os.path.exists("guide.png"):
