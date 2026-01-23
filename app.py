@@ -976,40 +976,86 @@ with tab1:
                         st.success(f"✅ 已記錄！"); st.session_state['should_clear_input'] = True; st.cache_data.clear(); time.sleep(1); st.rerun()
                     else: st.error("❌ 寫入失敗")
 
+# ================= Tab 2: 收支分析 =================
 with tab2:
     st.markdown("##### 📊 收支狀況")
-    df_all = get_all_transactions(CURRENT_SHEET_SOURCE)
-    if df_all.empty: st.info("尚無交易資料")
-    else:
-        av_years = sorted(df_all['Year'].dropna().unique().tolist())
-        with st.expander("📅 篩選年度區間", expanded=True):
-            if len(av_years)>0:
-                mn, mx = int(min(av_years)), int(max(av_years))
-                sel_y = st.slider("年份", mn, mx, (mn, mx)) if mn != mx else (mn, mx)
-                df_y = df_all[(df_all['Year']>=sel_y[0]) & (df_all['Year']<=sel_y[1])]
-                exp_t = df_y[df_y['Type']!='收入'].groupby('Year')['Amount_Def'].sum().reset_index(); exp_t['Type']='支出'
-                inc_t = df_y[df_y['Type']=='收入'].groupby('Year')['Amount_Def'].sum().reset_index(); inc_t['Type']='收入'
-                chart = pd.concat([exp_t, inc_t])
-                if not chart.empty:
-                    import plotly.express as px
-                    fig = px.bar(chart, x="Year", y="Amount_Def", color="Type", barmode="group", color_discrete_map={"收入":"#2ecc71","支出":"#ff6b6b"})
-                    st.plotly_chart(fig, use_container_width=True)
-        st.markdown("---")
-        am = sorted(df_all['Month'].unique(), reverse=True)
-        tm = st.selectbox("🗓️ 查看詳細月份", am)
-        md = df_all[df_all['Month']==tm]
-        with st.expander("🔍 檢視明細"):
-            cols_show = ['Date','Main_Category','Sub_Category','Amount_Original','Currency','Amount_Def','Note']
-            if "Recorder" in md.columns: cols_show.append("Recorder")
-            st.dataframe(md[cols_show].sort_values(by='Date', ascending=False), use_container_width=True)
+    df_tx = get_data("Transactions", CURRENT_SHEET_SOURCE)
 
-        ed = md[md['Type']!='收入']
-        if not ed.empty:
-            pd_pie = ed.groupby("Main_Category")["Amount_Def"].sum().reset_index()
-            pd_pie = pd_pie[pd_pie["Amount_Def"]>0]
-            if not pd_pie.empty:
-                fig_pie = px.pie(pd_pie, values="Amount_Def", names="Main_Category", hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
-                st.plotly_chart(fig_pie, use_container_width=True)
+    if df_tx.empty:
+        st.info("尚無交易資料")
+    else:
+        df_tx['Date'] = pd.to_datetime(df_tx['Date'], errors='coerce')
+        df_tx['Amount_Def'] = pd.to_numeric(df_tx['Amount_Def'], errors='coerce').fillna(0)
+        df_tx['Month'] = df_tx['Date'].dt.strftime('%Y-%m')
+        
+        all_months = sorted(df_tx['Month'].unique())
+        
+        with st.expander("📅 篩選區間", expanded=True):
+            if len(all_months) > 0:
+                c_sel1, c_sel2 = st.columns(2)
+                with c_sel1: start_month = st.selectbox("開始月份", all_months, index=0)
+                with c_sel2: end_month = st.selectbox("結束月份", all_months, index=len(all_months)-1)
+                selected_months = [m for m in all_months if start_month <= m <= end_month]
+                
+                expense_trend = df_tx[(df_tx['Month'].isin(selected_months)) & (df_tx['Type'] != '收入')].groupby('Month')['Amount_Def'].sum().reset_index()
+                expense_trend.rename(columns={'Amount_Def': 'Amount'}, inplace=True)
+                expense_trend['Type'] = '支出'
+                
+                income_trend = df_tx[(df_tx['Month'].isin(selected_months)) & (df_tx['Type'] == '收入')].groupby('Month')['Amount_Def'].sum().reset_index()
+                income_trend.rename(columns={'Amount_Def': 'Amount'}, inplace=True)
+                income_trend['Type'] = '收入'
+                
+                trend_data = pd.concat([expense_trend, income_trend], ignore_index=True)
+                
+                if not trend_data.empty:
+                    import plotly.express as px
+                    fig_trend = px.bar(trend_data, x="Month", y="Amount", color="Type", barmode="group", 
+                                     color_discrete_map={"收入": "#2ecc71", "支出": "#ff6b6b"})
+                    fig_trend.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(t=20, l=10, r=10, b=10))
+                    st.plotly_chart(fig_trend, use_container_width=True)
+
+        # st.markdown("---")
+        with st.expander("🗓️ 查看詳細月份", expanded=True):
+            target_month = st.selectbox("選擇月份", sorted(all_months, reverse=True))
+            
+            month_data = df_tx[df_tx['Month'] == target_month]
+            monthly_income = month_data[month_data['Type'] == '收入']['Amount_Def'].sum()
+            monthly_expense = month_data[month_data['Type'] != '收入']['Amount_Def'].sum()
+            
+            st.markdown(f"""
+            <div class="metric-container">
+                <div class="metric-card" style="border-left: 5px solid #2ecc71;">
+                    <span class="metric-label">總收入 ({default_currency_setting})</span>
+                    <span class="metric-value">${monthly_income:,.2f}</span>
+                </div>
+                <div class="metric-card" style="border-left: 5px solid #ff6b6b;">
+                    <span class="metric-label">總支出 ({default_currency_setting})</span>
+                    <span class="metric-value">${monthly_expense:,.2f}</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">結餘</span>
+                    <span class="metric-value">${monthly_income - monthly_expense:,.2f}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            expense_only_data = month_data[month_data['Type'] != '收入']
+            if not expense_only_data.empty:
+                pie_data = expense_only_data.groupby("Main_Category")["Amount_Def"].sum().reset_index()
+                pie_data = pie_data[pie_data["Amount_Def"] > 0]
+                
+                if not pie_data.empty:
+                    fig_pie = px.pie(pie_data, values="Amount_Def", names="Main_Category", hole=0.5,
+                                    color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig_pie.update_layout(margin=dict(t=20, b=20, l=20, r=20))
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                else:
+                    st.info("本月支出相抵後無正向金額，無法顯示圓餅圖。")
+                
+        # [新增] 除錯用明細表
+        with st.expander("🔍 檢視本月明細 (除錯用)"):
+            debug_df = month_data[['Date', 'Main_Category', 'Sub_Category', 'Amount_Original', 'Currency', 'Amount_Def', 'Note']].sort_values(by='Date', ascending=False)
+            st.dataframe(debug_df, use_container_width=True)
 
 # ================= Tab 3: 設定管理 =================
 with tab3:
