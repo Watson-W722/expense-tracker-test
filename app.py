@@ -996,7 +996,9 @@ with tab2:
         df_tx['Year'] = df_tx['Date'].dt.year
         
         all_months = sorted(df_tx['Month'].unique())
-        all_years = sorted(df_tx['Year'].unique())
+
+       # 1. 年度趨勢比較圖 (包含 Transactions + Transactions_History)
+        all_years = sorted(df_tx['Year'].dropna().unique().astype(int))
         
         with st.expander("📅 篩選區間", expanded=True):
             if len(all_years) > 0:
