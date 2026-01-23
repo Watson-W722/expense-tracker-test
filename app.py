@@ -659,7 +659,7 @@ with st.sidebar:
             st.cache_data.clear(); st.rerun()
     else: st.success(f"📘 帳本：{DISPLAY_TITLE}")
 
-    if plan == "VIP": st.markdown(f"👤 **{nickname_display}** <span class='vip-badge'>VIP</span>", unsafe_allow_html=True)
+    if plan == "VIP": st.markdown(f"👤 **{nickname_display}** <span class='vip-badge'>  VIP </span>", unsafe_allow_html=True)
     else:
         expire_str = user_info.get("Expire_Date", str(today_date))
         try: expire_dt = datetime.strptime(expire_str, "%Y-%m-%d").date(); days_left = (expire_dt - today_date).days
