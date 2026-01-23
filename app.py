@@ -940,7 +940,7 @@ with tab3:
         c_nick_in, c_nick_btn = st.columns([3, 1])
         current_nick = st.session_state.user_info.get("Nickname", "")
         new_nick_val = c_nick_in.text_input("修改顯示暱稱", value=current_nick, label_visibility="collapsed")
-        
+     
         if c_nick_btn.button("💾 儲存暱稱"):
             if new_nick_val and new_nick_val != current_nick:
                 with st.spinner("更新中..."):
@@ -954,8 +954,6 @@ with tab3:
                         st.rerun()
                     else:
                         st.error(msg)
-        
-        st.markdown("---")
 
         user_books = st.session_state.user_info.get("Books", [])
         
@@ -968,11 +966,9 @@ with tab3:
                 try: default_idx = next(i for i, b in enumerate(user_books) if b["url"] == CURRENT_SHEET_SOURCE)
                 except: default_idx = 0
                 selected_manage_book_name = st.selectbox("選擇要管理的帳本", book_names, index=default_idx, key="manage_book_sel")
-            
             target_book = next((b for b in user_books if b["name"] == selected_manage_book_name), None)
             target_role = target_book.get("role", "Member")
             target_url = target_book.get("url", "")
-
             with c_btn:
                 st.write(""); st.write("") 
                 is_owner = (target_role == "Owner")
