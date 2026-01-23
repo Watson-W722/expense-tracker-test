@@ -354,27 +354,48 @@ def login_flow():
 
         # === 註冊 ===
         elif st.session_state.login_mode == "register":
-            st.info("💡 註冊新帳號")
-            with st.expander("👉 設定說明"):
-                st.markdown(f"1. [建立副本]({TEMPLATE_URL}) \n 2. 共用給機器人 Email")
-                if "gcp_service_account" in st.secrets:
-                    st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
-            
-            email_in = st.text_input("Email").strip()
-            pwd_in = st.text_input("密碼", type="password")
-            nick_in = st.text_input("暱稱 (用於交易記錄)")
-            sheet_in = st.text_input("Google Sheet 網址")
-            
-            if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
-                if email_in and pwd_in and sheet_in and nick_in:
-                    with st.spinner("註冊中..."):
-                        success, result = handle_user_login(email_in, pwd_in, sheet_in, nickname=nick_in, is_register=True)
-                        if success:
-                            st.session_state.is_logged_in = True
-                            st.session_state.user_info = result
-                            st.success("註冊成功！"); time.sleep(1); st.rerun()
-                        else: st.error(f"失敗：{result}")
-                else: st.warning("請填寫所有欄位")
+            st.info("💡 新用戶請先設定您的記帳本")
+             with st.expander("👉 點此查看設定步驟 (含圖文教學)"):
+        st.markdown(f"""
+        **步驟 1：建立記帳本副本**  
+        請點擊連結建立一份屬於您的 Google Sheet：  
+        👉 [**[點此建立記帳本副本（下載後可更名）]**]({TEMPLATE_URL})
+        """)
+        #st.markdown("---")        
+        st.markdown("**步驟 2：共用權限給機器人**")
+        st.write("請將您的記帳本「共用」給以下機器人 Email (權限設為 **編輯者/Editor**)，系統才能寫入資料。")
+        
+        if "gcp_service_account" in st.secrets:
+            st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
+        else:
+            st.warning("⚠️ 系統尚未設定 Secrets，無法顯示機器人 Email")
+        with st. expander("**操作示意圖：**"):
+          # 圖片處理：
+          # 1. 使用「內嵌 Expander」作為縮圖機制
+          # 2. 只有使用者點擊展開時，才顯示完整寬度的圖片 (use_container_width=True)
+          # 3. 這樣電腦版不會佔滿畫面，手機版點開後又能清晰查看
+          if os.path.exists("guide.png"):
+              with st.markdown("📷 點擊查看操作圖解 (點擊展開圖片)"):
+                  st.image("guide.png", caption="請參照圖中紅框處共用給機器人", use_container_width=True)
+          else:
+              # 若無圖片，僅提示
+              st.caption("🚫 (提示：將 guide.png 放入專案資料夾即可顯示圖解)")
+
+        email_in = st.text_input("Email").strip()
+        pwd_in = st.text_input("密碼", type="password")
+        nick_in = st.text_input("暱稱 (用於交易記錄)")
+        sheet_in = st.text_input("Google Sheet 網址")
+        
+        if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
+            if email_in and pwd_in and sheet_in and nick_in:
+                with st.spinner("註冊中..."):
+                    success, result = handle_user_login(email_in, pwd_in, sheet_in, nickname=nick_in, is_register=True)
+                    if success:
+                        st.session_state.is_logged_in = True
+                        st.session_state.user_info = result
+                        st.success("註冊成功！"); time.sleep(1); st.rerun()
+                    else: st.error(f"失敗：{result}")
+            else: st.warning("請填寫所有欄位")
 
         # === 登入 ===
         else:
