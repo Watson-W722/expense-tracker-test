@@ -155,13 +155,15 @@ def send_otp_email(to_email, code, subject="【記帳本】驗證碼"):
 
 # [新增] 發送邀請通知信函式
 def send_invitation_email(to_email, inviter_email, book_name):
-    if "email" not in st.secrets: return False, "尚未設定 Email Secrets"
+    # 1. 檢查 Secrets
+    if "email" not in st.secrets: 
+        return False, "Secrets 未設定 [email]"
     
     sender = st.secrets["email"]["sender"]
     pwd = st.secrets["email"]["password"]
     
+    # 2. 準備信件內容
     subject = f"【我的記帳本】您收到來自 {inviter_email} 的共用邀請"
-    
     body = f"""
     您好！
 
@@ -186,14 +188,16 @@ def send_invitation_email(to_email, inviter_email, book_name):
     msg['From'] = sender
     msg['To'] = to_email
     
+    # 3. 嘗試連線並寄信
     try:
+        # 使用 SMTP_SSL (Port 465)
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(sender, pwd)
             server.sendmail(sender, to_email, msg.as_string())
-        return True, "邀請信已發送"
+        return True, "發送成功"
     except Exception as e:
-        print(f"Mail Error: {e}")
-        return False, f"寄信失敗: {e}"
+        # 回傳具體錯誤訊息
+        return False, f"SMTP 錯誤: {str(e)}"
 
 def add_binding(target_email, sheet_url, book_name, role="Member", operator_email=None):
     client = get_gspread_client()
@@ -441,6 +445,7 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
         users_sheet = admin_book.worksheet("Users")
         bindings_sheet = admin_book.worksheet("Book_Bindings")
         
+        # 1. 檢查使用者是否存在
         try: cell = users_sheet.find(target_email)
         except: cell = None
 
@@ -449,24 +454,44 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
             row = [target_email, "", today, "RESET_REQUIRED", "Pending", today, "Trial", target_email.split("@")[0]]
             users_sheet.append_row(row)
         
+        # 2. 檢查是否已經綁定
         existing = bindings_sheet.get_all_records()
         df = pd.DataFrame(existing)
         if not df.empty:
             check = df[(df["Email"] == target_email) & (df["Sheet_URL"] == sheet_url)]
-            if not check.empty: return True, "使用者已在此帳本中"
+            if not check.empty: return True, "該使用者已經在此帳本中，無需重複邀請"
         
+        # 3. 檢查 Owner 唯一性
         if role == "Owner":
             if not df.empty:
                 owner_check = df[(df["Sheet_URL"] == sheet_url) & (df["Role"] == "Owner")]
                 if not owner_check.empty: return False, "❌ 此帳本已經有擁有者"
 
+        # 4. 寫入綁定資料庫
         bindings_sheet.append_row([target_email, sheet_url, book_name, role])
         
+        # 5. 寫入 Log
         op = operator_email if operator_email else "System"
         action = "新增綁定" if role == "Owner" else "邀請成員"
         write_system_log(op, action, target_email, book_name, sheet_url)
-        return True, "邀請/綁定成功！"
-    except Exception as e: return False, f"Error: {e}"
+        
+        # 6. [關鍵除錯區] 執行寄信並回報結果
+        status_msg = "綁定成功！"
+        
+        # 條件：必須是邀請成員(Member) 且 有操作者Email
+        if role == "Member":
+            if operator_email:
+                is_sent, mail_msg = send_invitation_email(target_email, operator_email, book_name)
+                if is_sent:
+                    status_msg += " (邀請信已寄出 ✅)"
+                else:
+                    status_msg += f" (但寄信失敗 ❌: {mail_msg})"
+            else:
+                status_msg += " (未寄信: 缺少操作者 Email)"
+        
+        return True, status_msg
+
+    except Exception as e: return False, f"系統錯誤: {e}"
 
 def remove_binding_from_db(target_email, sheet_url, operator_email=None, book_name="Unknown"):
     client = get_gspread_client()
