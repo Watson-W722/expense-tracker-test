@@ -153,28 +153,39 @@ def send_otp_email(to_email, code, subject="【記帳本】驗證碼"):
         return True, "驗證碼已發送"
     except Exception as e: return False, f"寄信失敗: {e}"
 
-# [修改] 發送邀請通知信函式 (已加入個資遮罩)
-def send_invitation_email(to_email, inviter_email, book_name):
+# [修改] 發送邀請通知信函式 (已加入個資遮罩、標題改用暱稱)
+def send_invitation_email(to_email, inviter_email, book_name, inviter_nickname=None):
     if "email" not in st.secrets: return False, "尚未設定 Email Secrets"
+    
+    # ⚠️ 請確認這裡的網址是您正確的 App 連結
+    APP_URL = "https://expense-tracker-test.streamlit.app" 
     
     sender = st.secrets["email"]["sender"]
     pwd = st.secrets["email"]["password"]
     
-    # --- 1. 先進行遮罩處理 ---
-    masked_inviter = mask_email(inviter_email) # 例如: wat***@gmail.com
-    masked_to = mask_email(to_email)           # 例如: bel***@gmail.com
+    # --- 1. 決定顯示名稱 (有暱稱用暱稱，沒暱稱用遮罩 Email) ---
+    if inviter_nickname:
+        display_name = inviter_nickname
+    else:
+        display_name = mask_email(inviter_email)
+        
+    masked_to = mask_email(to_email)
     
-    # --- 2. 標題與內容使用遮罩後的變數 ---
-    subject = f"【我的記帳本】您收到來自 {masked_inviter} 的共用邀請"
+    # --- 2. 標題與內容 ---
+    # 標題改用 display_name (暱稱)
+    subject = f"【我的記帳本】您收到來自 {display_name} 的共用邀請"
     
     body = f"""
     您好！
 
-    使用者 {masked_inviter} 邀請您共同管理記帳本：「{book_name}」。
+    使用者 {display_name} ({mask_email(inviter_email)}) 邀請您共同管理記帳本：「{book_name}」。
 
     --------------------------------------------------
+    🔗 App 連結：{APP_URL}
+    --------------------------------------------------
+
     👉 如果您已有帳號：
-    請直接登入 App，您將在「切換帳本」選單中看到此新帳本。
+    請點擊上方連結登入 App，您將在「切換帳本」選單中看到此新帳本。
 
     👉 如果您尚未註冊 / 初次使用：
     您的帳號已預先建立。請前往 App 首頁：
@@ -189,7 +200,7 @@ def send_invitation_email(to_email, inviter_email, book_name):
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From'] = sender
-    msg['To'] = to_email # 這裡當然要是真實 Email 才能寄到
+    msg['To'] = to_email
     
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
@@ -415,7 +426,7 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
                 owner_check = df[(df["Sheet_URL"] == sheet_url) & (df["Role"] == "Owner")]
                 if not owner_check.empty: return False, "❌ 此帳本已經有擁有者"
 
-        # 4. 寫入綁定資料庫
+        # 4. 寫入綁定
         bindings_sheet.append_row([target_email, sheet_url, book_name, role])
         
         # 5. 寫入 Log
@@ -423,13 +434,21 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
         action = "新增綁定" if role == "Owner" else "邀請成員"
         write_system_log(op, action, target_email, book_name, sheet_url)
         
-        # 6. [關鍵除錯區] 執行寄信並回報結果
+        # 6. [修改] 執行寄信 (抓取暱稱)
         status_msg = "綁定成功！"
         
-        # 條件：必須是邀請成員(Member) 且 有操作者Email
         if role == "Member":
             if operator_email:
-                is_sent, mail_msg = send_invitation_email(target_email, operator_email, book_name)
+                # 嘗試從 Session State 抓取當前操作者的暱稱
+                current_nick = None
+                if "user_info" in st.session_state:
+                    # 確保 Session 中的人就是操作者 (通常是的)
+                    if st.session_state.user_info.get("Email") == operator_email:
+                        current_nick = st.session_state.user_info.get("Nickname")
+                
+                # 呼叫寄信函式，傳入暱稱
+                is_sent, mail_msg = send_invitation_email(target_email, operator_email, book_name, inviter_nickname=current_nick)
+                
                 if is_sent:
                     status_msg += " (邀請信已寄出 ✅)"
                 else:
@@ -587,7 +606,6 @@ def login_flow():
                     st.write("請共用給以下 Email (權限設為 **編輯者/Editor**)")
                     if "gcp_service_account" in st.secrets:
                         st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
-                    st.markdown("---")
                     if os.path.exists("guide.png"):
                         with st.expander("📷 操作示意圖"): st.image("guide.png", caption="共用設定示意圖", use_container_width=True)
 
