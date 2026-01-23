@@ -208,7 +208,6 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
 
         if not cell:
             today = str(datetime.now().date())
-            # 建立空帳號，密碼設為 RESET_REQUIRED
             row = [target_email, "", today, "RESET_REQUIRED", "Pending", today, "Trial", target_email.split("@")[0]]
             users_sheet.append_row(row)
         
@@ -233,12 +232,20 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
         action = "新增綁定" if role == "Owner" else "邀請成員"
         write_system_log(op, action, target_email, book_name, sheet_url)
         
-        # 6. [修正重點] 這裡加入發送邀請信的邏輯
-        # 只有當角色是 Member (被邀請)，且有操作者 Email 時才發信
+        # 6. [修正重點] 檢查寄信結果
+        # 如果是邀請成員，嘗試寄信，並捕捉結果
+        mail_status_msg = ""
         if role == "Member" and operator_email:
-            send_invitation_email(target_email, operator_email, book_name)
+            is_sent, mail_err = send_invitation_email(target_email, operator_email, book_name)
+            if is_sent:
+                mail_status_msg = "(已發送通知信)"
+            else:
+                # 如果寄信失敗，回傳 True (因為資料庫已綁定)，但附帶錯誤訊息
+                # 這裡會把具體的錯誤 (mail_err) 顯示給您看
+                return True, f"✅ 綁定成功，但 Email 發送失敗：{mail_err}"
         
-        return True, "操作成功！(已發送通知信)"
+        return True, f"操作成功！{mail_status_msg}"
+
     except Exception as e: return False, f"Error: {e}"
 
 def reset_user_password(email, new_password, new_nickname=None):
