@@ -11,6 +11,7 @@ from email.mime.text import MIMEText
 import random
 import string
 import re
+import plotly.express as px  # 確保引入 plotly
 
 # --- 頁面設定 ---
 st.set_page_config(page_title="我的記帳本 Pro", layout="wide", page_icon="💰")
@@ -59,10 +60,13 @@ st.markdown("""
     .metric-value { font-size: 1.6rem; font-weight: 700; color: #2c3e50; }
     .val-green { color: #2ecc71; }
     .val-red { color: #e74c3c; }
-    /* 按鈕樣式 */
     div.stButton > button { border-radius: 8px; font-weight: 600; }
-    
-    /* Tab 樣式微調 */
+    .stTabs {
+        position: relative;
+        background-color: #f8f9fa;
+        z-index: 990;
+        padding-top: 10px;
+    }
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] {
         height: 50px;
@@ -153,98 +157,63 @@ def send_otp_email(to_email, code, subject="【記帳本】驗證碼"):
         return True, "驗證碼已發送"
     except Exception as e: return False, f"寄信失敗: {e}"
 
-# [修改] 發送邀請通知信函式 (已加入個資遮罩、標題改用暱稱)
 def send_invitation_email(to_email, inviter_email, book_name, inviter_nickname=None):
     if "email" not in st.secrets: return False, "尚未設定 Email Secrets"
-    
-    # ⚠️ 請確認這裡的網址是您正確的 App 連結
     APP_URL = "https://expense-tracker-test.streamlit.app" 
-    
     sender = st.secrets["email"]["sender"]
     pwd = st.secrets["email"]["password"]
     
-    # --- 1. 決定顯示名稱 (有暱稱用暱稱，沒暱稱用遮罩 Email) ---
-    if inviter_nickname:
-        display_name = inviter_nickname
-    else:
-        display_name = mask_email(inviter_email)
-        
+    if inviter_nickname: display_name = inviter_nickname
+    else: display_name = mask_email(inviter_email)
     masked_to = mask_email(to_email)
     
-    # --- 2. 標題與內容 ---
-    # 標題改用 display_name (暱稱)
     subject = f"【我的記帳本】您收到來自 {display_name} 的共用邀請"
-    
     body = f"""
     您好！
-
     使用者 {display_name} ({mask_email(inviter_email)}) 邀請您共同管理記帳本：「{book_name}」。
-
     --------------------------------------------------
     🔗 App 連結：{APP_URL}
     --------------------------------------------------
-
-    👉 如果您已有帳號：
-    請點擊上方連結登入 App，您將在「切換帳本」選單中看到此新帳本。
-
-    👉 如果您尚未註冊 / 初次使用：
-    您的帳號已預先建立。請前往 App 首頁：
+    👉 如果您已有帳號：請點擊上方連結登入 App，您將在「切換帳本」選單中看到此新帳本。
+    👉 如果您尚未註冊 / 初次使用：您的帳號已預先建立。請前往 App 首頁：
     1. 點擊「🔑 忘記密碼 / 啟用帳號」
     2. 輸入您的 Email ({masked_to}) 
     3. 收取驗證碼並設定您的密碼與暱稱
     --------------------------------------------------
-
     祝記帳愉快！
     """
-    
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = sender
-    msg['To'] = to_email
-    
+    msg = MIMEText(body); msg['Subject'] = subject; msg['From'] = sender; msg['To'] = to_email
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(sender, pwd)
             server.sendmail(sender, to_email, msg.as_string())
         return True, "邀請信已發送"
-    except Exception as e:
-        print(f"Mail Error: {e}")
-        return False, f"寄信失敗: {e}"
+    except Exception as e: return False, f"寄信失敗: {e}"
 
 def reset_user_password(email, new_password, new_nickname=None):
-    """重設密碼，並處理試用期重置與暱稱更新"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
         users_sheet = admin_book.worksheet("Users")
-        
-        # 尋找使用者 Row
         cell = users_sheet.find(email)
         if not cell: return False, "找不到使用者"
-        
         row = cell.row
         old_hash = users_sheet.cell(row, 4).value
         new_hash = hash_password(new_password)
-        
         updates = []
-        updates.append({'range': f'D{row}', 'values': [[new_hash]]}) # 更新密碼
-        
-        # 如果是初次啟用 (RESET_REQUIRED)，重置加入日期與到期日
+        updates.append({'range': f'D{row}', 'values': [[new_hash]]})
         if old_hash == "RESET_REQUIRED":
             today = datetime.now().date()
             expire_date = today + timedelta(days=TRIAL_DAYS)
-            updates.append({'range': f'C{row}', 'values': [[str(today)]]}) # Join_Date
-            updates.append({'range': f'F{row}', 'values': [[str(expire_date)]]}) # Expire_Date
-        
+            updates.append({'range': f'C{row}', 'values': [[str(today)]]})
+            updates.append({'range': f'F{row}', 'values': [[str(expire_date)]]})
         if new_nickname:
             updates.append({'range': f'H{row}', 'values': [[new_nickname]]})
-            
         users_sheet.batch_update(updates)
         return True, "密碼更新成功 (若是首次啟用，試用期已重置)"
     except Exception as e: return False, f"資料庫錯誤: {e}"
 
 def update_user_nickname(email, new_nickname):
-    """更新使用者暱稱"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
@@ -257,7 +226,6 @@ def update_user_nickname(email, new_nickname):
 
 @st.cache_data(ttl=600)
 def get_all_users_nickname_map():
-    """回傳 {email: nickname} 的字典，用於顯示"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
@@ -266,39 +234,28 @@ def get_all_users_nickname_map():
         return {row["Email"]: row.get("Nickname", "") for row in records}
     except: return {}
 
-# ==========================================
-# [新增] 寫入系統日誌 (Audit Log)
-# ==========================================
 def write_system_log(operator, action, target_email, book_name, sheet_url):
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
         try: log_sheet = admin_book.worksheet("System_Logs")
         except: log_sheet = admin_book.add_worksheet("System_Logs", 1000, 6); log_sheet.append_row(["Timestamp", "Operator", "Action", "Target_Email", "Book_Name", "Sheet_URL"])
-        
         tz_tw = timezone(timedelta(hours=8))
         now_str = datetime.now(tz_tw).strftime("%Y-%m-%d %H:%M:%S")
         log_sheet.append_row([now_str, operator, action, target_email, book_name, sheet_url])
         return True
-    except Exception as e:
-        print(f"Log Error: {e}")
-        return False
+    except Exception as e: print(f"Log Error: {e}"); return False
 
-# ==========================================
-# [新增] 註冊前置檢查 (防呆檢查)
-# ==========================================
 def validate_registration_pre_check(email, sheet_url):
     client = get_gspread_client()
     if not client: return False, "API Error"
     admin_url = st.secrets.get("admin_sheet_url")
-    
     try:
         admin_book = client.open_by_url(admin_url)
         users_sheet = admin_book.worksheet("Users")
         try: cell = users_sheet.find(email); 
         except: cell = None
         if cell: return False, "❌ 此 Email 已存在系統中。請直接「登入」。"
-
         try:
             bindings_sheet = admin_book.worksheet("Book_Bindings")
             b_records = bindings_sheet.get_all_records()
@@ -404,7 +361,6 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
         users_sheet = admin_book.worksheet("Users")
         bindings_sheet = admin_book.worksheet("Book_Bindings")
         
-        # 1. 檢查使用者是否存在
         try: cell = users_sheet.find(target_email)
         except: cell = None
 
@@ -413,51 +369,37 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
             row = [target_email, "", today, "RESET_REQUIRED", "Pending", today, "Trial", target_email.split("@")[0]]
             users_sheet.append_row(row)
         
-        # 2. 檢查是否已經綁定
         existing = bindings_sheet.get_all_records()
         df = pd.DataFrame(existing)
         if not df.empty:
             check = df[(df["Email"] == target_email) & (df["Sheet_URL"] == sheet_url)]
             if not check.empty: return True, "該使用者已經在此帳本中，無需重複邀請"
         
-        # 3. 檢查 Owner 唯一性
         if role == "Owner":
             if not df.empty:
                 owner_check = df[(df["Sheet_URL"] == sheet_url) & (df["Role"] == "Owner")]
                 if not owner_check.empty: return False, "❌ 此帳本已經有擁有者"
 
-        # 4. 寫入綁定
         bindings_sheet.append_row([target_email, sheet_url, book_name, role])
         
-        # 5. 寫入 Log
         op = operator_email if operator_email else "System"
         action = "新增綁定" if role == "Owner" else "邀請成員"
         write_system_log(op, action, target_email, book_name, sheet_url)
         
-        # 6. [修改] 執行寄信 (抓取暱稱)
         status_msg = "綁定成功！"
-        
         if role == "Member":
             if operator_email:
-                # 嘗試從 Session State 抓取當前操作者的暱稱
                 current_nick = None
                 if "user_info" in st.session_state:
-                    # 確保 Session 中的人就是操作者 (通常是的)
                     if st.session_state.user_info.get("Email") == operator_email:
                         current_nick = st.session_state.user_info.get("Nickname")
                 
-                # 呼叫寄信函式，傳入暱稱
                 is_sent, mail_msg = send_invitation_email(target_email, operator_email, book_name, inviter_nickname=current_nick)
-                
-                if is_sent:
-                    status_msg += " (邀請信已寄出 ✅)"
-                else:
-                    status_msg += f" (但寄信失敗 ❌: {mail_msg})"
-            else:
-                status_msg += " (未寄信: 缺少操作者 Email)"
+                if is_sent: status_msg += " (邀請信已寄出 ✅)"
+                else: status_msg += f" (但寄信失敗 ❌: {mail_msg})"
+            else: status_msg += " (未寄信: 缺少操作者 Email)"
         
         return True, status_msg
-
     except Exception as e: return False, f"系統錯誤: {e}"
 
 def remove_binding_from_db(target_email, sheet_url, operator_email=None, book_name="Unknown"):
@@ -478,35 +420,25 @@ def remove_binding_from_db(target_email, sheet_url, operator_email=None, book_na
         else: return False, "找不到該綁定資料"
     except Exception as e: return False, f"刪除失敗: {e}"
 
-# [新增] 移轉擁有權函式
 def transfer_book_ownership(sheet_url, old_owner_email, new_owner_email, book_name="Unknown"):
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
         bindings_sheet = admin_book.worksheet("Book_Bindings")
         records = bindings_sheet.get_all_records()
-        
-        row_old = None
-        row_new = None
-        
-        # 尋找兩位的資料列 (Gspread index 從 1 開始，標題是 1，資料從 2 開始)
+        row_old = None; row_new = None
         for i, row in enumerate(records):
             if row["Sheet_URL"] == sheet_url:
-                if row["Email"] == old_owner_email:
-                    row_old = i + 2
-                elif row["Email"] == new_owner_email:
-                    row_new = i + 2
+                if row["Email"] == old_owner_email: row_old = i + 2
+                elif row["Email"] == new_owner_email: row_new = i + 2
         
         if row_old and row_new:
-            # 假設 Role 是第 4 欄 (D)
+            # 欄位 D (第 4 欄) 是 Role
             bindings_sheet.update_cell(row_old, 4, "Member")
             bindings_sheet.update_cell(row_new, 4, "Owner")
-            
             write_system_log(old_owner_email, "移轉擁有權", new_owner_email, book_name, sheet_url)
             return True, "移轉成功！您已成為成員。"
-        else:
-            return False, "資料庫讀取錯誤，找不到成員資料"
-            
+        else: return False, "資料庫讀取錯誤，找不到成員資料"
     except Exception as e: return False, f"移轉失敗: {e}"
 
 def get_book_members(sheet_url):
@@ -523,7 +455,7 @@ def get_book_members(sheet_url):
     except: return []
 
 # ==========================================
-# 登入流程 (含 OTP 註冊驗證)
+# 登入流程
 # ==========================================
 def login_flow():
     if "is_logged_in" in st.session_state and st.session_state.is_logged_in:
@@ -675,39 +607,27 @@ with c_title:
 
 # ... (Data Functions) ...
 @st.cache_data(ttl=300)
-def get_data(worksheet_name, source_str):
-    client = get_gspread_client()
-    try:
-        sheet = open_spreadsheet(client, source_str)
-        worksheet = sheet.worksheet(worksheet_name)
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
-        if worksheet_name == "Settings":
-            for col in ["Main_Category", "Sub_Category", "Payment_Method", "Currency", "Default_Currency"]:
-                if col not in df.columns: df[col] = ""
-        if worksheet_name == "Recurring":
-            for col in ["Day", "Type", "Main_Category", "Sub_Category", "Payment_Method", "Currency", "Amount_Original", "Note", "Last_Run_Month"]:
-                if col not in df.columns: df[col] = ""
-        if not df.empty: df = df.dropna(how='all')
-        return df
-    except: return pd.DataFrame()
-
-@st.cache_data(ttl=300)
 def get_all_transactions(source_str):
     client = get_gspread_client()
     all_data = []
     try:
         sheet = open_spreadsheet(client, source_str)
+        # [修正] 同時讀取 Transactions 與 Transactions_History
+        target_sheets = ["Transactions", "Transactions_History"]
+        
         for ws in sheet.worksheets():
-            if ws.title.startswith("Transactions"):
+            # 只要是開頭符合的都抓 (或是明確指定那兩個)
+            if ws.title in target_sheets or ws.title.startswith("Transactions"):
                 data = ws.get_all_records()
                 if data: all_data.extend(data)
+                
         df = pd.DataFrame(all_data)
         if not df.empty:
             df = df.dropna(how='all')
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
             df['Amount_Def'] = pd.to_numeric(df['Amount_Def'], errors='coerce').fillna(0)
-            df['Year'] = df['Date'].dt.year; df['Month'] = df['Date'].dt.strftime('%Y-%m')
+            df['Year'] = df['Date'].dt.year
+            df['Month'] = df['Date'].dt.strftime('%Y-%m')
             if "Recorder" not in df.columns: df["Recorder"] = ""
         return df
     except: return pd.DataFrame()
@@ -847,12 +767,12 @@ with st.sidebar:
             st.cache_data.clear(); st.rerun()
     else: st.success(f"📘 帳本：{DISPLAY_TITLE}")
 
-    if plan == "VIP": st.markdown(f"👤 **{nickname_display}** <span class='vip-badge'>  VIP</span>", unsafe_allow_html=True)
+    if plan == "VIP": st.markdown(f"👤 **{nickname_display}** <span class='vip-badge'> VIP</span>", unsafe_allow_html=True)
     else:
         expire_str = user_info.get("Expire_Date", str(today_date))
         try: expire_dt = datetime.strptime(expire_str, "%Y-%m-%d").date(); days_left = (expire_dt - today_date).days
         except: days_left = 0
-        st.markdown(f"👤 **{nickname_display}** <span class='trial-badge'>  {plan}</span>", unsafe_allow_html=True)
+        st.markdown(f"👤 **{nickname_display}** <span class='trial-badge'> {plan}</span>", unsafe_allow_html=True)
         if days_left > 0: st.caption(f"⏳ 試用倒數：**{days_left}** 天"); st.progress(min(days_left / 30, 1.0))
         else: st.error(f"⛔ 試用期已結束")
 
@@ -930,7 +850,7 @@ with tab1:
     user_today = today_date 
     current_month_str = user_today.strftime("%Y-%m")
 
-    tx_df = get_data("Transactions", CURRENT_SHEET_SOURCE)
+    tx_df = get_all_transactions(CURRENT_SHEET_SOURCE)
     total_inc = 0; total_exp = 0
     if not tx_df.empty and 'Date' in tx_df.columns:
         tx_df['Date'] = pd.to_datetime(tx_df['Date'], errors='coerce')
@@ -979,7 +899,7 @@ with tab1:
 # ================= Tab 2: 收支分析 =================
 with tab2:
     st.markdown("##### 📊 收支狀況")
-    df_tx = get_data("Transactions", CURRENT_SHEET_SOURCE)
+    df_tx = get_all_transactions(CURRENT_SHEET_SOURCE)
 
     if df_tx.empty:
         st.info("尚無交易資料")
@@ -987,75 +907,85 @@ with tab2:
         df_tx['Date'] = pd.to_datetime(df_tx['Date'], errors='coerce')
         df_tx['Amount_Def'] = pd.to_numeric(df_tx['Amount_Def'], errors='coerce').fillna(0)
         df_tx['Month'] = df_tx['Date'].dt.strftime('%Y-%m')
+        df_tx['Year'] = df_tx['Date'].dt.year
         
-        all_months = sorted(df_tx['Month'].unique())
+        # 1. 年度趨勢比較圖 (包含 Transactions + Transactions_History)
+        all_years = sorted(df_tx['Year'].dropna().unique().astype(int))
         
-        with st.expander("📅 篩選區間", expanded=True):
-            if len(all_months) > 0:
-                c_sel1, c_sel2 = st.columns(2)
-                with c_sel1: start_month = st.selectbox("開始月份", all_months, index=0)
-                with c_sel2: end_month = st.selectbox("結束月份", all_months, index=len(all_months)-1)
-                selected_months = [m for m in all_months if start_month <= m <= end_month]
+        with st.expander("📅 篩選年度區間 (比較總收入/總支出)", expanded=True):
+            if len(all_years) > 0:
+                mn, mx = int(min(all_years)), int(max(all_years))
+                # 使用 slider 選擇區間
+                sel_y = st.slider("選擇年份範圍", mn, mx, (mn, mx))
                 
-                expense_trend = df_tx[(df_tx['Month'].isin(selected_months)) & (df_tx['Type'] != '收入')].groupby('Month')['Amount_Def'].sum().reset_index()
-                expense_trend.rename(columns={'Amount_Def': 'Amount'}, inplace=True)
-                expense_trend['Type'] = '支出'
+                # 篩選資料
+                df_trend = df_tx[(df_tx['Year'] >= sel_y[0]) & (df_tx['Year'] <= sel_y[1])]
                 
-                income_trend = df_tx[(df_tx['Month'].isin(selected_months)) & (df_tx['Type'] == '收入')].groupby('Month')['Amount_Def'].sum().reset_index()
-                income_trend.rename(columns={'Amount_Def': 'Amount'}, inplace=True)
-                income_trend['Type'] = '收入'
+                # 分組計算
+                trend_group = df_trend.groupby(['Year', 'Type'])['Amount_Def'].sum().reset_index()
                 
-                trend_data = pd.concat([expense_trend, income_trend], ignore_index=True)
-                
-                if not trend_data.empty:
-                    import plotly.express as px
-                    fig_trend = px.bar(trend_data, x="Month", y="Amount", color="Type", barmode="group", 
-                                     color_discrete_map={"收入": "#2ecc71", "支出": "#ff6b6b"})
-                    fig_trend.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(t=20, l=10, r=10, b=10))
+                # 為了顯示漂亮，可以把 Type 重新命名或排序
+                if not trend_group.empty:
+                    fig_trend = px.bar(
+                        trend_group, 
+                        x="Year", 
+                        y="Amount_Def", 
+                        color="Type", 
+                        barmode="group",
+                        title=f"{sel_y[0]} - {sel_y[1]} 收支趨勢比較",
+                        labels={"Amount_Def": f"金額 ({default_currency_setting})", "Year": "年份"},
+                        color_discrete_map={"收入": "#2ecc71", "支出": "#ff6b6b"}
+                    )
+                    fig_trend.update_layout(xaxis=dict(tickmode='linear')) # 強制顯示所有年份
                     st.plotly_chart(fig_trend, use_container_width=True)
-
-        # st.markdown("---")
-        with st.expander("🗓️ 查看詳細月份", expanded=True):
-            target_month = st.selectbox("選擇月份", sorted(all_months, reverse=True))
-            
-            month_data = df_tx[df_tx['Month'] == target_month]
-            monthly_income = month_data[month_data['Type'] == '收入']['Amount_Def'].sum()
-            monthly_expense = month_data[month_data['Type'] != '收入']['Amount_Def'].sum()
-            
-            st.markdown(f"""
-            <div class="metric-container">
-                <div class="metric-card" style="border-left: 5px solid #2ecc71;">
-                    <span class="metric-label">總收入 ({default_currency_setting})</span>
-                    <span class="metric-value">${monthly_income:,.2f}</span>
-                </div>
-                <div class="metric-card" style="border-left: 5px solid #ff6b6b;">
-                    <span class="metric-label">總支出 ({default_currency_setting})</span>
-                    <span class="metric-value">${monthly_expense:,.2f}</span>
-                </div>
-                <div class="metric-card">
-                    <span class="metric-label">結餘</span>
-                    <span class="metric-value">${monthly_income - monthly_expense:,.2f}</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            expense_only_data = month_data[month_data['Type'] != '收入']
-            if not expense_only_data.empty:
-                pie_data = expense_only_data.groupby("Main_Category")["Amount_Def"].sum().reset_index()
-                pie_data = pie_data[pie_data["Amount_Def"] > 0]
-                
-                if not pie_data.empty:
-                    fig_pie = px.pie(pie_data, values="Amount_Def", names="Main_Category", hole=0.5,
-                                    color_discrete_sequence=px.colors.qualitative.Pastel)
-                    fig_pie.update_layout(margin=dict(t=20, b=20, l=20, r=20))
-                    st.plotly_chart(fig_pie, use_container_width=True)
                 else:
-                    st.info("本月支出相抵後無正向金額，無法顯示圓餅圖。")
+                    st.info("選定區間無數據")
+
+        st.markdown("---")
+        
+        # 2. 月份詳細分析 (維持原樣)
+        all_months = sorted(df_tx['Month'].unique())
+        with st.expander("🗓️ 查看詳細月份", expanded=True):
+            if len(all_months) > 0:
+                target_month = st.selectbox("選擇月份", sorted(all_months, reverse=True))
                 
-        # [新增] 除錯用明細表
-        with st.expander("🔍 檢視本月明細 (除錯用)"):
-            debug_df = month_data[['Date', 'Main_Category', 'Sub_Category', 'Amount_Original', 'Currency', 'Amount_Def', 'Note']].sort_values(by='Date', ascending=False)
-            st.dataframe(debug_df, use_container_width=True)
+                month_data = df_tx[df_tx['Month'] == target_month]
+                monthly_income = month_data[month_data['Type'] == '收入']['Amount_Def'].sum()
+                monthly_expense = month_data[month_data['Type'] != '收入']['Amount_Def'].sum()
+                
+                st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-card" style="border-left: 5px solid #2ecc71;">
+                        <span class="metric-label">總收入 ({default_currency_setting})</span>
+                        <span class="metric-value">${monthly_income:,.2f}</span>
+                    </div>
+                    <div class="metric-card" style="border-left: 5px solid #ff6b6b;">
+                        <span class="metric-label">總支出 ({default_currency_setting})</span>
+                        <span class="metric-value">${monthly_expense:,.2f}</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-label">結餘</span>
+                        <span class="metric-value">${monthly_income - monthly_expense:,.2f}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                expense_only_data = month_data[month_data['Type'] != '收入']
+                if not expense_only_data.empty:
+                    pie_data = expense_only_data.groupby("Main_Category")["Amount_Def"].sum().reset_index()
+                    pie_data = pie_data[pie_data["Amount_Def"] > 0]
+                    
+                    if not pie_data.empty:
+                        fig_pie = px.pie(pie_data, values="Amount_Def", names="Main_Category", hole=0.5,
+                                        color_discrete_sequence=px.colors.qualitative.Pastel)
+                        fig_pie.update_layout(margin=dict(t=20, b=20, l=20, r=20))
+                        st.plotly_chart(fig_pie, use_container_width=True)
+                    else:
+                        st.info("本月支出相抵後無正向金額，無法顯示圓餅圖。")
+                
+                # 明細表
+                debug_df = month_data[['Date', 'Main_Category', 'Sub_Category', 'Amount_Original', 'Currency', 'Amount_Def', 'Note', 'Recorder']].sort_values(by='Date', ascending=False)
+                st.dataframe(debug_df, use_container_width=True)
 
 # ================= Tab 3: 設定管理 =================
 with tab3:
@@ -1067,7 +997,7 @@ with tab3:
 
     with st.expander("📚 帳本與成員管理", expanded=True):
         
-        # 0. 個人資料設定
+        # 0. 個人資料設定 (修正暱稱同步)
         st.markdown("###### 👤 個人資料設定")
         c_nick_in, c_nick_btn = st.columns([3, 1])
         current_nick = st.session_state.user_info.get("Nickname", "")
@@ -1078,14 +1008,19 @@ with tab3:
                 with st.spinner("更新中..."):
                     ok, msg = update_user_nickname(st.session_state.user_info["Email"], new_nick_val)
                     if ok:
+                        # [修正] 1. 更新 Session State
                         st.session_state.user_info["Nickname"] = new_nick_val
+                        # [修正] 2. 清除成員列表快取，確保下方列表顯示新暱稱
                         get_all_users_nickname_map.clear()
+                        # [修正] 3. 清除全域資料快取，以防其他依賴
                         st.cache_data.clear()
                         st.success(msg)
                         time.sleep(1)
                         st.rerun()
                     else:
                         st.error(msg)
+
+        st.markdown("---")
 
         user_books = st.session_state.user_info.get("Books", [])
         
@@ -1098,9 +1033,11 @@ with tab3:
                 try: default_idx = next(i for i, b in enumerate(user_books) if b["url"] == CURRENT_SHEET_SOURCE)
                 except: default_idx = 0
                 selected_manage_book_name = st.selectbox("選擇要管理的帳本", book_names, index=default_idx, key="manage_book_sel")
+            
             target_book = next((b for b in user_books if b["name"] == selected_manage_book_name), None)
             target_role = target_book.get("role", "Member")
             target_url = target_book.get("url", "")
+
             with c_btn:
                 st.write(""); st.write("") 
                 is_owner = (target_role == "Owner")
@@ -1125,84 +1062,70 @@ with tab3:
                         else:
                             st.error(msg)
 
+            st.markdown("---")
+
             members = get_book_members(target_url)
             nickname_map = get_all_users_nickname_map()
 
             if members:
-                st.caption(f"共 {len(members)} 位成員")
+                # [Layout] 成員列表
+                h1, h2, h3, h4 = st.columns([3.5, 2, 1.5, 3])
+                h1.markdown("**帳號**")
+                h2.markdown("**暱稱**")
+                h3.markdown("**角色**")
+                h4.markdown("**操作**")
+                
                 my_email = st.session_state.user_info["Email"]
 
                 for idx, m in enumerate(members):
-                    # 【UI 重點】使用 container(border=True) 建立卡片感
-                    with st.container(border=True):
-                        # 將卡片分為：[左側資訊區 (70%)] [右側操作區 (30%)]
-                        c_info, c_action = st.columns([0.7, 0.3])
-                        
-                        # --- 左側：資訊區 ---
-                        with c_info:
-                            is_me = (m["Email"] == my_email)
-                            nick = nickname_map.get(m["Email"], "-")
-                            role = m.get("Role", "Member")
-                            
-                            # 第一行：暱稱 + 角色圖示
-                            if role == "Owner":
-                                st.markdown(f"**{nick}** <span style='background:#FFF3CD; color:#856404; padding:2px 6px; border-radius:4px; font-size:0.8em;'>👑 擁有者</span>", unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"**{nick}**", unsafe_allow_html=True)
-                            
-                            # 第二行：Email (使用 caption 縮小字體，適合手機閱讀)
-                            display_email = f"{mask_email(m['Email'])} (自己)" if is_me else mask_email(m["Email"])
-                            st.caption(f"📧 {display_email}")
-
-                        # --- 右側：操作區 (收納進 Popover) ---
-                        with c_action:
-                            # 垂直置中調整 (Streamlit 小技巧)
-                            st.write("") 
-                            
-                            # 判斷權限
-                            # 只有 Owner 可以管理其他人
-                            if target_role == "Owner":
-                                if not is_me:
-                                    # 使用 Popover 收納按鈕，解決手機版按鈕過大問題
-                                    with st.popover("⚙️ 管理", use_container_width=True):
-                                        st.write(f"對 {nick} 執行操作：")
-                                        
-                                        # 移除按鈕
-                                        if st.button("🚫 移除成員", key=f"kick_{idx}", use_container_width=True):
-                                            ok, msg = remove_binding_from_db(m["Email"], target_url, operator_email=my_email, book_name=selected_manage_book_name)
-                                            if ok: st.toast("移除成功"); time.sleep(1); st.rerun()
-                                            else: st.error(msg)
-                                        
-                                        # 移轉按鈕
-                                        with st.expander("👑 移轉擁有權"):
-                                            st.warning("移轉後您將變為普通成員！")
-                                            if st.button("確認移轉", key=f"transfer_{idx}", use_container_width=True):
-                                                with st.spinner("處理中..."):
-                                                    ok, msg = transfer_book_ownership(target_url, my_email, m["Email"], book_name=selected_manage_book_name)
-                                                    if ok:
-                                                        st.success(msg)
-                                                        st.cache_data.clear()
-                                                        time.sleep(2)
-                                                        st.rerun()
-                                                    else:
-                                                        st.error(msg)
-                                else:
-                                    # 自己是 Owner
-                                    st.caption("您是擁有者")
-
-                            elif target_role == "Member":
-                                if is_me:
-                                    if st.button("🚪 退出", key=f"leave_{idx}", type="primary", use_container_width=True):
-                                        ok, msg = remove_binding_from_db(my_email, target_url, operator_email=my_email, book_name=selected_manage_book_name)
-                                        if ok: 
-                                            st.success("已退出"); time.sleep(1); st.cache_data.clear()
-                                            if target_url == st.session_state.get("current_book_url"): del st.session_state["current_book_url"]
-                                            st.rerun()
+                    r1, r2, r3, r4 = st.columns([3.5, 2, 1.5, 3])
+                    
+                    is_me = (m["Email"] == my_email)
+                    display_email = f"{mask_email(m['Email'])} (自己)" if is_me else mask_email(m["Email"])
+                    r1.write(display_email)
+                    
+                    nick = nickname_map.get(m["Email"], "-")
+                    r2.write(nick)
+                    
+                    role = m.get("Role", "Member")
+                    if role == "Owner": r3.markdown(f"<span style='color:orange; font-weight:bold;'>👑 擁有者</span>", unsafe_allow_html=True)
+                    else: r3.caption("成員")
+                    
+                    # 操作按鈕並排
+                    with r4:
+                        if target_role == "Owner":
+                            if not is_me:
+                                b1, b2 = st.columns(2)
+                                with b1:
+                                    if st.button("🚫 移除", key=f"tbl_kick_{idx}", use_container_width=True):
+                                        ok, msg = remove_binding_from_db(m["Email"], target_url, operator_email=my_email, book_name=selected_manage_book_name)
+                                        if ok: st.toast("移除成功"); time.sleep(1); st.rerun()
                                         else: st.error(msg)
-                                else:
-                                    # Member 看別人 -> 無權限
-                                    st.caption("成員")
-
+                                
+                                with b2:
+                                    with st.popover("👑 移轉", use_container_width=True):
+                                        st.write(f"確定移轉給 {nick}？")
+                                        st.caption("移轉後您將變為普通成員。")
+                                        if st.button("確認移轉", key=f"transfer_{idx}", use_container_width=True):
+                                            with st.spinner("處理中..."):
+                                                ok, msg = transfer_book_ownership(target_url, my_email, m["Email"], book_name=selected_manage_book_name)
+                                                if ok:
+                                                    st.success(msg)
+                                                    st.cache_data.clear()
+                                                    time.sleep(2)
+                                                    st.rerun()
+                                                else:
+                                                    st.error(msg)
+                        
+                        elif target_role == "Member":
+                            if is_me:
+                                if st.button("🚪 退出", key=f"tbl_leave_{idx}", type="primary", use_container_width=True):
+                                    ok, msg = remove_binding_from_db(my_email, target_url, operator_email=my_email, book_name=selected_manage_book_name)
+                                    if ok: 
+                                        st.success("已退出"); time.sleep(1); st.cache_data.clear()
+                                        if target_url == st.session_state.get("current_book_url"): del st.session_state["current_book_url"]
+                                        st.rerun()
+                                    else: st.error(msg)
             else:
                 st.caption("無法讀取成員列表")
         
