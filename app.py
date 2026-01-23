@@ -847,18 +847,18 @@ with st.sidebar:
             st.cache_data.clear(); st.rerun()
     else: st.success(f"📘 帳本：{DISPLAY_TITLE}")
 
-    if plan == "VIP": st.markdown(f"👤 **{nickname_display}** <span class='vip-badge'>VIP</span>", unsafe_allow_html=True)
+    if plan == "VIP": st.markdown(f"👤 **{nickname_display}** <span class='vip-badge'>  VIP</span>", unsafe_allow_html=True)
     else:
         expire_str = user_info.get("Expire_Date", str(today_date))
         try: expire_dt = datetime.strptime(expire_str, "%Y-%m-%d").date(); days_left = (expire_dt - today_date).days
         except: days_left = 0
-        st.markdown(f"👤 **{nickname_display}** <span class='trial-badge'>{plan}</span>", unsafe_allow_html=True)
+        st.markdown(f"👤 **{nickname_display}** <span class='trial-badge'>  {plan}</span>", unsafe_allow_html=True)
         if days_left > 0: st.caption(f"⏳ 試用倒數：**{days_left}** 天"); st.progress(min(days_left / 30, 1.0))
         else: st.error(f"⛔ 試用期已結束")
 
     if plan != "VIP":
-        st.info("##### 🚀 升級持續使用")
-        if st.button("💎 立即訂閱 VIP", type="primary", use_container_width=True): st.toast("🚧 金流功能開發中")
+        #st.info("##### 🚀 升級持續使用")
+        if st.button("💎 升級 VIP 持續使用", type="primary", use_container_width=True): st.toast("🚧 金流功能開發中")
     st.divider()
     if st.button("🚪 登出"):
         for key in list(st.session_state.keys()): del st.session_state[key]
