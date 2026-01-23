@@ -153,7 +153,7 @@ def send_otp_email(to_email, code, subject="【記帳本】驗證碼"):
         return True, "驗證碼已發送"
     except Exception as e: return False, f"寄信失敗: {e}"
 
-# [新增] 發送邀請通知信
+# [新增] 發送邀請通知信函式
 def send_invitation_email(to_email, inviter_email, book_name):
     if "email" not in st.secrets: return False, "尚未設定 Email Secrets"
     
@@ -195,7 +195,6 @@ def send_invitation_email(to_email, inviter_email, book_name):
         print(f"Mail Error: {e}")
         return False, f"寄信失敗: {e}"
 
-# [修改] 新增綁定函式 (加入寄信邏輯)
 def add_binding(target_email, sheet_url, book_name, role="Member", operator_email=None):
     client = get_gspread_client()
     try:
@@ -203,7 +202,7 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
         users_sheet = admin_book.worksheet("Users")
         bindings_sheet = admin_book.worksheet("Book_Bindings")
         
-        # 1. 檢查使用者是否存在，不存在則建立 Pending 帳號
+        # 1. 檢查使用者是否存在
         try: cell = users_sheet.find(target_email)
         except: cell = None
 
@@ -234,7 +233,8 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
         action = "新增綁定" if role == "Owner" else "邀請成員"
         write_system_log(op, action, target_email, book_name, sheet_url)
         
-        # 6. [新增] 如果是邀請成員 (非 Owner 自己新增)，發送通知信
+        # 6. [修正重點] 這裡加入發送邀請信的邏輯
+        # 只有當角色是 Member (被邀請)，且有操作者 Email 時才發信
         if role == "Member" and operator_email:
             send_invitation_email(target_email, operator_email, book_name)
         
