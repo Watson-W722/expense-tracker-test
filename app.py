@@ -272,7 +272,7 @@ def login_flow():
             if st.button("✨ 註冊並登入", ...):
                 # [修改 3] 傳入 nickname 參數
                 if email_input and password_input and sheet_input and nickname_input:
-                     success, result = handle_user_login(..., nickname=nickname_input, is_register=True)
+                     success, result = handle_user_login(email_input, password_input, user_sheet_name=None, nickname=None, is_register=False)
                 with st.spinner("註冊中..."):
                         success, result = handle_user_login(email_input, password_input, sheet_input, is_register=True)
                         if success:
@@ -445,6 +445,9 @@ with st.sidebar:
     today_date = get_user_date(user_offset)
     st.info(f"日期：{today_date}")
 
+    # 4. 顯示帳本名稱
+    st.success(f"📘 帳本：{DISPLAY_TITLE}")
+
     # 3. 顯示使用者狀態與倒數邏輯
     if plan == "VIP":
         st.markdown(f"👤 **{nickname_display}** <span class='vip-badge'>VIP</span>", unsafe_allow_html=True)
@@ -460,9 +463,6 @@ with st.sidebar:
             
         # 顯示標籤
         st.markdown(f"👤 **{nickname_display}** <span class='trial-badge'>{plan}</span>", unsafe_allow_html=True)
-
-        # 顯示帳本名稱
-        st.success(f"📘 帳本：{DISPLAY_TITLE}")
         
         # 顯示倒數天數
         if days_left > 0:
