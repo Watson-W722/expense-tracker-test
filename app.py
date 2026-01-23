@@ -275,7 +275,7 @@ def add_binding(target_email, sheet_url, book_name, role="Member"):
         return False, f"Error: {e}"
 
 # ==========================================
-# 登入/註冊/忘記密碼 流程
+# 登入/註冊/忘記密碼 流程 (已修復 Duplicate ID 錯誤)
 # ==========================================
 def login_flow():
     # 若已登入
@@ -324,6 +324,7 @@ def login_flow():
         if st.session_state.login_mode == "reset":
             if st.session_state.reset_stage == 1:
                 st.info("請輸入 Email，我們將發送驗證碼給您。")
+                # 這裡已經有 key="reset_input_email"，沒問題
                 email_reset = st.text_input("註冊信箱", key="reset_input_email").strip()
                 if st.button("📩 發送驗證碼", type="primary", use_container_width=True):
                     if not email_reset: st.warning("請輸入 Email")
@@ -339,8 +340,8 @@ def login_flow():
                             else: st.error(msg)
             elif st.session_state.reset_stage == 2:
                 st.success(f"驗證碼已寄至 {st.session_state.reset_email}")
-                otp_input = st.text_input("輸入 6 位數驗證碼")
-                new_pwd = st.text_input("設定新密碼", type="password")
+                otp_input = st.text_input("輸入 6 位數驗證碼", key="otp_input")
+                new_pwd = st.text_input("設定新密碼", type="password", key="reset_new_pwd")
                 if st.button("🔄 確認重設", type="primary", use_container_width=True):
                     if otp_input == st.session_state.otp_code and new_pwd:
                         ok, msg = reset_user_password(st.session_state.reset_email, new_pwd)
@@ -352,8 +353,9 @@ def login_flow():
                         else: st.error(msg)
                     else: st.error("驗證碼錯誤或密碼為空")
 
-        # === 註冊 ===
+        # === 註冊 (Register) ===
         elif st.session_state.login_mode == "register":
+            # --- 整合修正後的圖文說明 ---
             st.info("💡 新用戶請先設定您的記帳本")
             with st.expander("👉 點此查看設定步驟 (含圖文教學)"):
                 st.markdown(f"""
@@ -373,35 +375,38 @@ def login_flow():
                     
                 st.markdown("---")
                 
-                # 圖片處理：檢查檔案是否存在
+                # 圖片處理
                 if os.path.exists("guide.png"):
-                    # 使用內層 expander 來收納圖片，避免畫面太長
                     with st.expander("📷 操作示意圖 (點擊展開)"):
                         st.image("guide.png", caption="請參照圖中紅框處共用給機器人", use_container_width=True)
                 else:
-                    # 若無圖片，僅提示
                     st.caption("🚫 (提示：將 guide.png 放入專案資料夾即可顯示圖解)")
+            # ---------------------------
+            
+            # [修正] 加上 key 避免與登入介面衝突
+            email_in = st.text_input("Email", key="reg_email").strip()
+            pwd_in = st.text_input("密碼", type="password", key="reg_pwd")
+            nick_in = st.text_input("暱稱 (用於交易記錄)", key="reg_nick")
+            sheet_in = st.text_input("Google Sheet 網址", key="reg_sheet")
+            
+            if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
+                if email_in and pwd_in and sheet_in and nick_in:
+                    with st.spinner("註冊中..."):
+                        # [修正] 這裡要傳入正確的參數
+                        success, result = handle_user_login(email_in, pwd_in, sheet_in, nickname=nick_in, is_register=True)
+                        if success:
+                            st.session_state.is_logged_in = True
+                            st.session_state.user_info = result
+                            st.success("註冊成功！"); time.sleep(1); st.rerun()
+                        else: st.error(f"失敗：{result}")
+                else: st.warning("請填寫所有欄位")
 
-        email_in = st.text_input("Email").strip()
-        pwd_in = st.text_input("密碼", type="password")
-        nick_in = st.text_input("暱稱 (用於交易記錄)")
-        sheet_in = st.text_input("Google Sheet 網址")
-        
-        if st.button("✨ 註冊並登入", type="primary", use_container_width=True):
-            if email_in and pwd_in and sheet_in and nick_in:
-                with st.spinner("註冊中..."):
-                    success, result = handle_user_login(email_in, pwd_in, sheet_in, nickname=nick_in, is_register=True)
-                    if success:
-                        st.session_state.is_logged_in = True
-                        st.session_state.user_info = result
-                        st.success("註冊成功！"); time.sleep(1); st.rerun()
-                    else: st.error(f"失敗：{result}")
-            else: st.warning("請填寫所有欄位")
-
-        # === 登入 ===
+        # === 登入 (Login) ===
         else:
-            email_in = st.text_input("Email").strip()
-            pwd_in = st.text_input("密碼", type="password")
+            # [修正] 加上 key 避免與註冊介面衝突
+            email_in = st.text_input("Email", key="login_email").strip()
+            pwd_in = st.text_input("密碼", type="password", key="login_pwd")
+            
             if st.button("🚀 登入", type="primary", use_container_width=True):
                 if email_in and pwd_in:
                     with st.spinner("登入中..."):
