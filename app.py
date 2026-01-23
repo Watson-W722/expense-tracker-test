@@ -725,6 +725,11 @@ with tab1:
         c = st.session_state.form_currency; a = st.session_state.form_amount_org
         val, _ = calculate_exchange(a, c, default_currency_setting, rates)
         st.session_state.form_amount_def = val
+    
+    # [修正] 補上這裡缺少的日期變數定義
+    # today_date 是從側邊欄 (Sidebar) 計算過來的全域變數
+    user_today = today_date 
+    current_month_str = user_today.strftime("%Y-%m")
 
     tx_df = get_data("Transactions", CURRENT_SHEET_SOURCE)
     total_inc = 0; total_exp = 0
