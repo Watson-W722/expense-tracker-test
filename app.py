@@ -699,10 +699,15 @@ def get_all_transactions(source_str):
     all_data = []
     try:
         sheet = open_spreadsheet(client, source_str)
+        # [修正] 同時讀取 Transactions 與 Transactions_History
+        target_sheets = ["Transactions", "Transactions_History"]
+
         for ws in sheet.worksheets():
-            if ws.title.startswith("Transactions"):
+            # 只要是開頭符合的都抓 (或是明確指定那兩個)
+            if ws.title in target_sheets or ws.title.startswith("Transactions"):
                 data = ws.get_all_records()
                 if data: all_data.extend(data)
+
         df = pd.DataFrame(all_data)
         if not df.empty:
             df = df.dropna(how='all')
@@ -990,67 +995,34 @@ with tab2:
         df_tx['Month'] = df_tx['Date'].dt.strftime('%Y-%m')
         df_tx['Year'] = df_tx['Date'].dt.year
         
-        #all_months = sorted(df_tx['Month'].unique())
-        # 1. 年度趨勢比較圖 (包含 Transactions + Transactions_History)
-        all_years = sorted(df_tx['Year'].dropna().unique().astype(int))
-
+        all_months = sorted(df_tx['Month'].unique())
+        all_years = sorted(df_tx['Year'].unique())
         
-        # with st.expander("📅 篩選區間", expanded=True):
-        #     if len(all_months) > 0:
-        #         c_sel1, c_sel2 = st.columns(2)
-        #         with c_sel1: start_month = st.selectbox("開始月份", all_months, index=0)
-        #         with c_sel2: end_month = st.selectbox("結束月份", all_months, index=len(all_months)-1)
-        #         selected_months = [m for m in all_months if start_month <= m <= end_month]
-                
-        #         expense_trend = df_tx[(df_tx['Month'].isin(selected_months)) & (df_tx['Type'] != '收入')].groupby('Month')['Amount_Def'].sum().reset_index()
-        #         expense_trend.rename(columns={'Amount_Def': 'Amount'}, inplace=True)
-        #         expense_trend['Type'] = '支出'
-                
-        #         income_trend = df_tx[(df_tx['Month'].isin(selected_months)) & (df_tx['Type'] == '收入')].groupby('Month')['Amount_Def'].sum().reset_index()
-        #         income_trend.rename(columns={'Amount_Def': 'Amount'}, inplace=True)
-        #         income_trend['Type'] = '收入'
-                
-        #         trend_data = pd.concat([expense_trend, income_trend], ignore_index=True)
-                
-        #         if not trend_data.empty:
-        #             import plotly.express as px
-        #             fig_trend = px.bar(trend_data, x="Month", y="Amount", color="Type", barmode="group", 
-        #                              color_discrete_map={"收入": "#2ecc71", "支出": "#ff6b6b"})
-        #             fig_trend.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(t=20, l=10, r=10, b=10))
-        #             st.plotly_chart(fig_trend, use_container_width=True)
-
-        with st.expander("📅 篩選年度區間 (比較總收入/總支出)", expanded=True):
+        with st.expander("📅 篩選區間", expanded=True):
             if len(all_years) > 0:
-                mn, mx = int(min(all_years)), int(max(all_years))
-                # 使用 slider 選擇區間
-                sel_y = st.slider("選擇年份範圍", mn, mx, (mn, mx))
+                c_sel1, c_sel2 = st.columns(2)
+                with c_sel1: start_year = st.selectbox("開始年份", all_years, index=0)
+                with c_sel2: end_year = st.selectbox("結束年份", all_years, index=len(all_years)-1)
+                selected_years = [m for m in all_years if start_year <= m <= end_year]
                 
-                # 篩選資料
-                df_trend = df_tx[(df_tx['Year'] >= sel_y[0]) & (df_tx['Year'] <= sel_y[1])]
+                expense_trend = df_tx[(df_tx['Year'].isin(selected_years)) & (df_tx['Type'] != '收入')].groupby('Year')['Amount_Def'].sum().reset_index()
+                expense_trend.rename(columns={'Amount_Def': 'Amount'}, inplace=True)
+                expense_trend['Type'] = '支出'
                 
-                # 分組計算
-                trend_group = df_trend.groupby(['Year', 'Type'])['Amount_Def'].sum().reset_index()
+                income_trend = df_tx[(df_tx['Year'].isin(selected_years)) & (df_tx['Type'] == '收入')].groupby('Year')['Amount_Def'].sum().reset_index()
+                income_trend.rename(columns={'Amount_Def': 'Amount'}, inplace=True)
+                income_trend['Type'] = '收入'
                 
-                # 為了顯示漂亮，可以把 Type 重新命名或排序
-                if not trend_group.empty:
-                    fig_trend = px.bar(
-                        trend_group, 
-                        x="Year", 
-                        y="Amount_Def", 
-                        color="Type", 
-                        barmode="group",
-                        title=f"{sel_y[0]} - {sel_y[1]} 收支趨勢比較",
-                        labels={"Amount_Def": f"金額 ({default_currency_setting})", "Year": "年份"},
-                        color_discrete_map={"收入": "#2ecc71", "支出": "#ff6b6b"}
-                    )
-                    fig_trend.update_layout(xaxis=dict(tickmode='linear')) # 強制顯示所有年份
+                trend_data = pd.concat([expense_trend, income_trend], ignore_index=True)
+                
+                if not trend_data.empty:
+                    import plotly.express as px
+                    fig_trend = px.bar(trend_data, x="Year", y="Amount", color="Type", barmode="group", 
+                                     color_discrete_map={"收入": "#2ecc71", "支出": "#ff6b6b"})
+                    fig_trend.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(t=20, l=10, r=10, b=10))
                     st.plotly_chart(fig_trend, use_container_width=True)
-                else:
-                    st.info("選定區間無數據")
 
         # st.markdown("---")
-        # 2. 月份詳細分析 (維持原樣)
-        all_months = sorted(df_tx['Month'].unique())
         with st.expander("🗓️ 查看詳細月份", expanded=True):
             target_month = st.selectbox("選擇月份", sorted(all_months, reverse=True))
             
