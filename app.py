@@ -113,12 +113,10 @@ def hash_password(password):
     return hashlib.sha256(str(password).encode('utf-8')).hexdigest()
 
 def is_valid_email(email):
-    """檢查 Email 格式是否有效"""
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
 def mask_email(email):
-    """隱私處理：workcipher@gmail.com -> wor***@gmail.com"""
     try:
         if "@" not in email: return email
         name, domain = email.split("@")
@@ -182,11 +180,9 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
 
         # ---------------- 註冊模式邏輯 ----------------
         if is_register:
-            # [Req 1] 如果帳號已存在 (無論是自己註冊過，還是被邀請過)，都阻擋
             if not user_row.empty:
                 return False, "❌ 此 Email 已存在系統中（可能已被邀請或註冊）。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。"
 
-            # [Check] 檢查帳本是否已被綁定
             b_records = bindings_sheet.get_all_records()
             df_bind = pd.DataFrame(b_records)
             
@@ -203,7 +199,6 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
                         display_name = owner_nickname if owner_nickname else mask_email(owner_email)
                         return False, f"❌ 此帳本已被 **{display_name}** 綁定。請聯繫該擁有者邀請您加入 (勿重複註冊)。"
 
-            # 執行註冊
             expire_date = today + timedelta(days=TRIAL_DAYS)
             final_nickname = nickname if nickname else email.split("@")[0]
             
@@ -225,7 +220,7 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
             return True, new_user
 
         # ---------------- 登入模式邏輯 ----------------
-        if is_register: # 若剛註冊完，資料庫已更新，這裡簡單重抓一次
+        if is_register: 
              records = users_sheet.get_all_records()
              df_users = pd.DataFrame(records)
              user_row = df_users[df_users["Email"] == email]
@@ -241,7 +236,6 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
         if pd.isna(user_info.get("Nickname")) or user_info.get("Nickname") == "":
             user_info["Nickname"] = email.split("@")[0]
 
-        # 撈取綁定
         b_records = bindings_sheet.get_all_records()
         df_bind = pd.DataFrame(b_records)
         user_books = df_bind[df_bind["Email"] == email]
@@ -306,11 +300,10 @@ def login_flow():
 
     if "login_mode" not in st.session_state: st.session_state.login_mode = "login"
     if "reset_stage" not in st.session_state: st.session_state.reset_stage = 1
-    if "reg_stage" not in st.session_state: st.session_state.reg_stage = 1 # 1: Input, 2: OTP
+    if "reg_stage" not in st.session_state: st.session_state.reg_stage = 1
     if "otp_code" not in st.session_state: st.session_state.otp_code = ""
     if "reset_email" not in st.session_state: st.session_state.reset_email = ""
     
-    # 用於暫存註冊資訊
     if "reg_data" not in st.session_state: st.session_state.reg_data = {}
 
     st.markdown("""<div class="login-container"><h2>👋 歡迎使用記帳本</h2>""", unsafe_allow_html=True)
@@ -383,27 +376,22 @@ def login_flow():
                             st.error("❌ Email 格式不正確")
                         else:
                             st.cache_data.clear() # 清快取
-                            # 先做初步檢查：Email 是否已存在？ (Reuse logic inside handle_user_login dry run)
-                            # 為了不重複寫 code，我們用一個簡單查詢
                             client = get_gspread_client()
                             try:
                                 book = client.open_by_url(st.secrets["admin_sheet_url"])
                                 sheet = book.worksheet("Users")
+                                # 使用 find 檢查是否已存在 (精確比對)
                                 if sheet.find(email_in):
                                     st.error("❌ 此 Email 已存在系統中。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。")
                                 else:
-                                    # 通過檢查，發送 OTP
                                     code = ''.join(random.choices(string.digits, k=6))
                                     st.session_state.otp_code = code
-                                    # 暫存資料
                                     st.session_state.reg_data = {
                                         "email": email_in, "pwd": pwd_in, "nick": nick_in, "sheet": sheet_in
                                     }
                                     with st.spinner("寄送驗證碼中..."):
                                         ok, msg = send_otp_email(email_in, code, subject="【記帳本】註冊驗證碼")
-                                        if ok:
-                                            st.session_state.reg_stage = 2
-                                            st.success("✅ 驗證碼已發送！"); time.sleep(1); st.rerun()
+                                        if ok: st.session_state.reg_stage = 2; st.success("✅ 驗證碼已發送！"); time.sleep(1); st.rerun()
                                         else: st.error(msg)
                             except Exception as e: st.error(f"系統檢查失敗: {e}")
                     else: st.warning("請填寫所有欄位")
@@ -420,10 +408,7 @@ def login_flow():
                                 reg_d["email"], reg_d["pwd"], reg_d["sheet"], 
                                 nickname=reg_d["nick"], is_register=True
                             )
-                            if success:
-                                st.session_state.is_logged_in = True
-                                st.session_state.user_info = result
-                                st.success("註冊成功！歡迎使用"); time.sleep(1); st.rerun()
+                            if success: st.session_state.is_logged_in = True; st.session_state.user_info = result; st.success("註冊成功！歡迎使用"); time.sleep(1); st.rerun()
                             else: st.error(f"註冊失敗：{result}")
                     else: st.error("❌ 驗證碼錯誤")
                 
@@ -456,7 +441,7 @@ with c_logo:
 with c_title:
     st.markdown("<h2 style='margin-bottom: 0; padding-top: 10px;'>我的記帳本</h2>", unsafe_allow_html=True)
 
-# ... (Get Data Functions) ...
+# ... (Data Functions) ...
 @st.cache_data(ttl=300)
 def get_data(worksheet_name, source_str):
     client = get_gspread_client()
@@ -563,6 +548,49 @@ def calculate_exchange(amount, input_currency, target_currency, rates):
         return round(exchanged_amount, 2), conversion_factor
     except: return amount, 0
 
+# [修正] 將此函式移動到這裡 (定義在被呼叫之前)
+def check_and_run_recurring():
+    if 'recurring_checked' in st.session_state: return 
+    rec_df = get_data("Recurring", CURRENT_SHEET_SOURCE)
+    if rec_df.empty: return
+    sys_tz = timezone(timedelta(hours=8))
+    today = datetime.now(sys_tz)
+    current_month_str = today.strftime("%Y-%m")
+    current_day = today.day
+    executed = 0
+    for idx, row in rec_df.iterrows():
+        try:
+            last_run = str(row['Last_Run_Month']).strip()
+            scheduled_day = int(row['Day'])
+            if last_run != current_month_str and current_day >= scheduled_day:
+                amt_org = float(row['Amount_Original'])
+                curr = row['Currency']
+                amt_target, _ = calculate_exchange(amt_org, curr, default_currency_setting, rates)
+                tx_date = today.strftime("%Y-%m-%d")
+                tx_row = [tx_date, row['Type'], row['Main_Category'], row['Sub_Category'], row['Payment_Method'], curr, amt_org, amt_target, f"(自動) {row['Note']}", str(datetime.now(sys_tz))]
+                if append_data("Transactions", tx_row, CURRENT_SHEET_SOURCE):
+                    update_recurring_last_run(idx, current_month_str, CURRENT_SHEET_SOURCE)
+                    executed += 1
+        except: continue
+    if executed > 0:
+        st.toast(f"🤖 自動補登了 {executed} 筆固定收支！", icon="✅")
+        st.cache_data.clear()
+        time.sleep(1)
+        st.rerun()
+    st.session_state['recurring_checked'] = True
+
+def add_sub_callback(main_cat, key):
+    new_val = st.session_state[key]
+    if new_val:
+        if new_val not in st.session_state.temp_cat_map[main_cat]: st.session_state.temp_cat_map[main_cat].append(new_val)
+        st.session_state[key] = "" 
+def add_pay_callback(key):
+    new_val = st.session_state[key]
+    if new_val and new_val not in st.session_state.temp_pay_list: st.session_state.temp_pay_list.append(new_val); st.session_state[key] = ""
+def add_curr_callback(key):
+    new_val = st.session_state[key]
+    if new_val and new_val not in st.session_state.temp_curr_list: st.session_state.temp_curr_list.append(new_val); st.session_state[key] = ""
+
 # --- 側邊欄 ---
 with st.sidebar:
     st.header("🌍 地區與帳號")
@@ -650,18 +678,6 @@ def save_all_to_sheet():
     final_df["Default_Currency"] = ""
     if len(final_df) > 0: final_df.at[0, "Default_Currency"] = st.session_state.get('temp_default_curr', default_currency_setting)
     if save_settings_data(final_df, CURRENT_SHEET_SOURCE): st.toast("✅ 設定已儲存！", icon="💾"); st.cache_data.clear()
-
-def add_sub_callback(main_cat, key):
-    new_val = st.session_state[key]
-    if new_val:
-        if new_val not in st.session_state.temp_cat_map[main_cat]: st.session_state.temp_cat_map[main_cat].append(new_val)
-        st.session_state[key] = "" 
-def add_pay_callback(key):
-    new_val = st.session_state[key]
-    if new_val and new_val not in st.session_state.temp_pay_list: st.session_state.temp_pay_list.append(new_val); st.session_state[key] = ""
-def add_curr_callback(key):
-    new_val = st.session_state[key]
-    if new_val and new_val not in st.session_state.temp_curr_list: st.session_state.temp_curr_list.append(new_val); st.session_state[key] = ""
 
 check_and_run_recurring()
 
