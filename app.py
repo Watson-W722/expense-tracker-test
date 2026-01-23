@@ -166,6 +166,25 @@ def reset_user_password(email, new_password):
     except Exception as e: return False, f"資料庫錯誤: {e}"
 
 # ==========================================
+# [新增] 寫入系統日誌 (Audit Log)
+# ==========================================
+def write_system_log(operator, action, target_email, book_name, sheet_url):
+    """將操作紀錄寫入 Admin DB 的 System_Logs 分頁"""
+    client = get_gspread_client()
+    try:
+        admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
+        try: log_sheet = admin_book.worksheet("System_Logs")
+        except: log_sheet = admin_book.add_worksheet("System_Logs", 1000, 6); log_sheet.append_row(["Timestamp", "Operator", "Action", "Target_Email", "Book_Name", "Sheet_URL"])
+        
+        tz_tw = timezone(timedelta(hours=8))
+        now_str = datetime.now(tz_tw).strftime("%Y-%m-%d %H:%M:%S")
+        log_sheet.append_row([now_str, operator, action, target_email, book_name, sheet_url])
+        return True
+    except Exception as e:
+        print(f"Log Error: {e}")
+        return False
+
+# ==========================================
 # [新增] 註冊前置檢查 (防呆檢查)
 # ==========================================
 def validate_registration_pre_check(email, sheet_url):
@@ -180,8 +199,7 @@ def validate_registration_pre_check(email, sheet_url):
         # 1. 檢查 Email 是否已存在
         try:
             cell = users_sheet.find(email)
-            if cell:
-                return False, "❌ 此 Email 已存在系統中。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。"
+            if cell: return False, "❌ 此 Email 已存在系統中。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。"
         except: pass
 
         # 2. 檢查帳本是否已被綁定
@@ -193,7 +211,13 @@ def validate_registration_pre_check(email, sheet_url):
             if not df_bind.empty and "Sheet_URL" in df_bind.columns:
                 conflict = df_bind[df_bind["Sheet_URL"] == sheet_url]
                 if not conflict.empty:
-                    owner_email = conflict.iloc[0]["Email"]
+                    # 如果有人綁定過，找出他是誰
+                    owner_record = conflict[conflict["Role"] == "Owner"]
+                    if not owner_record.empty:
+                        owner_email = owner_record.iloc[0]["Email"]
+                    else:
+                        owner_email = conflict.iloc[0]["Email"] # Fallback
+
                     owner_nickname = ""
                     try:
                         records_u = users_sheet.get_all_records()
@@ -203,7 +227,7 @@ def validate_registration_pre_check(email, sheet_url):
                     except: pass
                     
                     display_name = owner_nickname if owner_nickname else mask_email(owner_email)
-                    return False, f"❌ 此帳本已被 **{display_name}** 綁定。請聯繫該擁有者邀請您加入 (勿重複註冊)。"
+                    return False, f"❌ 此帳本已被 **{display_name}** 綁定為擁有者。請聯繫他邀請您加入 (勿重複註冊)。"
         except: pass
 
         return True, "OK"
@@ -212,7 +236,7 @@ def validate_registration_pre_check(email, sheet_url):
         return False, f"系統檢查失敗: {e}"
 
 # ==========================================
-# [核心] 使用者與多帳本管理
+# [核心] 使用者與多帳本管理 (已更新 Role 邏輯)
 # ==========================================
 def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_register=False):
     client = get_gspread_client()
@@ -223,8 +247,10 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
     try:
         admin_book = client.open_by_url(admin_url)
         users_sheet = admin_book.worksheet("Users")
+        
+        # [修正] Bindings 表包含 Role
         try: bindings_sheet = admin_book.worksheet("Book_Bindings")
-        except: bindings_sheet = admin_book.add_worksheet("Book_Bindings", 100, 4); bindings_sheet.append_row(["Email", "Sheet_URL", "Book_Name", "Owner"])
+        except: bindings_sheet = admin_book.add_worksheet("Book_Bindings", 100, 4); bindings_sheet.append_row(["Email", "Sheet_URL", "Book_Name", "Role"])
         
         records = users_sheet.get_all_records()
         if not records:
@@ -257,8 +283,11 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
             users_sheet.append_row(row_data)
             
             book_title = get_sheet_title_safe(user_sheet_name)
+            # [修正] 註冊成功，自動成為 Owner
             bindings_sheet.append_row([email, user_sheet_name, book_title, "Owner"])
             
+            write_system_log(email, "註冊並建立帳本(Owner)", email, book_title, user_sheet_name)
+
             return True, new_user
 
         # ---------------- 登入模式邏輯 ----------------
@@ -285,8 +314,11 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
         books_list = []
         if not user_books.empty:
             for _, row in user_books.iterrows():
-                books_list.append({"name": row["Book_Name"], "url": row["Sheet_URL"], "role": row.get("Owner", "Member")})
+                # [修正] 讀取 Role 欄位 (相容舊版 Owner 標題，優先讀取 Role)
+                role = row.get("Role", row.get("Owner", "Member"))
+                books_list.append({"name": row["Book_Name"], "url": row["Sheet_URL"], "role": role})
         else:
+            # Fallback for old users without binding records
             books_list.append({"name": "我的記帳本", "url": user_info.get("Sheet_Name", ""), "role": "Owner"})
         
         user_info["Books"] = books_list
@@ -300,60 +332,74 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
 
     except Exception as e: return False, f"Login Error: {e}"
 
-def add_binding(target_email, sheet_url, book_name, role="Member"):
+def add_binding(target_email, sheet_url, book_name, role="Member", operator_email=None):
+    """新增綁定：如果是新帳本 role='Owner'，如果是邀請 role='Member'"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
         users_sheet = admin_book.worksheet("Users")
         bindings_sheet = admin_book.worksheet("Book_Bindings")
         
+        # 1. 檢查使用者是否存在
         try: cell = users_sheet.find(target_email)
         except: cell = None
 
         if not cell:
+            # 邀請新使用者：建立空帳號
             today = str(datetime.now().date())
             row = [target_email, "", today, "RESET_REQUIRED", "Pending", today, "Trial", target_email.split("@")[0]]
             users_sheet.append_row(row)
         
+        # 2. 檢查該使用者是否已綁定此帳本
         existing = bindings_sheet.get_all_records()
         df = pd.DataFrame(existing)
         if not df.empty:
             check = df[(df["Email"] == target_email) & (df["Sheet_URL"] == sheet_url)]
             if not check.empty: return True, "使用者已在此帳本中"
+        
+        # 3. [重要] 如果是要綁定為 Owner (新增帳本)，需檢查該帳本是否已經有 Owner
+        if role == "Owner":
+            if not df.empty:
+                owner_check = df[(df["Sheet_URL"] == sheet_url) & (df["Role"] == "Owner")]
+                if not owner_check.empty:
+                    return False, "❌ 此帳本已經有擁有者，您無法重複建立。請聯繫擁有者邀請您加入。"
 
         bindings_sheet.append_row([target_email, sheet_url, book_name, role])
-        return True, "邀請成功！請通知對方使用「忘記密碼」設定帳戶"
+        
+        op = operator_email if operator_email else "System"
+        action = "新增帳本(Owner)" if role == "Owner" else "邀請成員(Member)"
+        write_system_log(op, action, target_email, book_name, sheet_url)
+        
+        return True, "操作成功！"
     except Exception as e: return False, f"Error: {e}"
 
-# [新增] 刪除綁定功能
-def remove_binding_from_db(target_email, sheet_url):
+def remove_binding_from_db(target_email, sheet_url, operator_email=None, book_name="Unknown"):
     """刪除 Book_Bindings 中的特定紀錄"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
         bindings_sheet = admin_book.worksheet("Book_Bindings")
         
-        # 抓取所有資料來比對
         records = bindings_sheet.get_all_records()
-        
-        # 找出符合 Email 和 URL 的列數 (Gspread 行數從 1 開始，標題是第 1 行，records 從第 2 行開始)
         row_to_delete = None
         for i, row in enumerate(records):
             if row["Email"] == target_email and row["Sheet_URL"] == sheet_url:
-                row_to_delete = i + 2 # +2 是因為 i 從 0 開始，且 Sheet 有標題列
+                row_to_delete = i + 2 
+                book_name = row["Book_Name"]
                 break
         
         if row_to_delete:
             bindings_sheet.delete_rows(row_to_delete)
+            op = operator_email if operator_email else target_email
+            action = "解除綁定/移除成員"
+            write_system_log(op, action, target_email, book_name, sheet_url)
             return True, "解除綁定成功"
         else:
             return False, "找不到該綁定資料"
     except Exception as e:
         return False, f"刪除失敗: {e}"
 
-# [新增] 查詢帳本成員
 def get_book_members(sheet_url):
-    """取得特定帳本的所有成員"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
@@ -758,8 +804,6 @@ def save_all_to_sheet():
     if len(final_df) > 0: final_df.at[0, "Default_Currency"] = st.session_state.get('temp_default_curr', default_currency_setting)
     if save_settings_data(final_df, CURRENT_SHEET_SOURCE): st.toast("✅ 設定已儲存！", icon="💾"); st.cache_data.clear()
 
-check_and_run_recurring()
-
 # --- Tabs Content ---
 tab1, tab2, tab3 = st.tabs(["📝 每日記帳", "📊 收支分析", "⚙️ 系統設定"])
 
@@ -775,8 +819,7 @@ with tab1:
         val, _ = calculate_exchange(a, c, default_currency_setting, rates)
         st.session_state.form_amount_def = val
 
-    # 確保有當月變數
-    user_today = today_date
+    user_today = today_date 
     current_month_str = user_today.strftime("%Y-%m")
 
     tx_df = get_data("Transactions", CURRENT_SHEET_SOURCE)
@@ -867,86 +910,85 @@ with tab3:
     if 'temp_curr_list' not in st.session_state: st.session_state.temp_curr_list = currency_list_custom
     if 'temp_default_curr' not in st.session_state: st.session_state.temp_default_curr = default_currency_setting
 
-    # [新增] 帳本與成員管理區塊
     with st.expander("📚 帳本與成員管理", expanded=True):
-        st.caption(f"當前帳本：{DISPLAY_TITLE}")
+        st.caption(f"當前操作帳本：{DISPLAY_TITLE}")
         
-        # 1. 管理我的綁定 (所有使用者都看得到)
         st.markdown("###### 📋 我綁定的帳本")
         user_books = st.session_state.user_info.get("Books", [])
+        
         if user_books:
-            # 這裡用 col 列出，方便加按鈕
             for idx, book in enumerate(user_books):
-                c1, c2, c3 = st.columns([3, 2, 1])
+                c1, c2, c3 = st.columns([3, 2, 2])
                 c1.write(f"📖 {book['name']}")
-                c2.caption(f"({book['role']})")
-                if c3.button("❌ 解除", key=f"unbind_{idx}"):
-                    ok, msg = remove_binding_from_db(st.session_state.user_info["Email"], book["url"])
-                    if ok:
-                        st.success(f"已解除 {book['name']}")
-                        time.sleep(1)
-                        # 如果解除的是當前這本，要強制重整或換本，這裡簡單做重整
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.error(msg)
-        else:
-            st.info("尚無綁定資料")
+                role_str = book.get('role', 'Member')
+                if role_str == "Owner":
+                    c2.markdown(f"<span style='color:orange; font-weight:bold;'>👑 擁有者</span>", unsafe_allow_html=True)
+                else:
+                    c2.caption("成員")
 
-        # 2. 管理成員 (只有 Owner 看得到)
-        # 判斷當前使用者在「目前這本帳本」的角色
-        current_role = "Member"
+                if role_str == "Owner":
+                    c3.caption("無法解除 (擁有者)")
+                else:
+                    if c3.button("🚪 退出帳本", key=f"leave_{idx}"):
+                        with st.spinner("處理中..."):
+                            ok, msg = remove_binding_from_db(st.session_state.user_info["Email"], book["url"], operator_email=st.session_state.user_info["Email"], book_name=book['name'])
+                            if ok:
+                                st.success(f"已退出 {book['name']}")
+                                time.sleep(1)
+                                st.cache_data.clear()
+                                if book["url"] == st.session_state.get("current_book_url"):
+                                    del st.session_state["current_book_url"]
+                                st.rerun()
+                            else:
+                                st.error(msg)
+        else:
+            st.info("目前尚無綁定任何帳本")
+
+        current_book_role = "Member"
         for b in user_books:
             if b["url"] == CURRENT_SHEET_SOURCE:
-                current_role = b.get("role", "Member")
+                current_book_role = b.get("role", "Member")
                 break
         
-        if current_role == "Owner":
+        if current_book_role == "Owner":
             st.markdown("---")
-            st.markdown("###### 👥 成員管理 (您是擁有者)")
-            
-            # 撈取目前這本帳本的所有成員
+            st.markdown(f"###### 👥 管理 **{DISPLAY_TITLE}** 的成員")
             members = get_book_members(CURRENT_SHEET_SOURCE)
-            # 過濾掉自己
             other_members = [m for m in members if m["Email"] != st.session_state.user_info["Email"]]
             
             if other_members:
                 for idx, m in enumerate(other_members):
-                    c1, c2 = st.columns([4, 1])
+                    mc1, mc2 = st.columns([4, 1])
                     masked = mask_email(m["Email"])
-                    c1.write(f"👤 {masked}")
-                    if c2.button("🚫 移除", key=f"kick_{idx}"):
-                        ok, msg = remove_binding_from_db(m["Email"], CURRENT_SHEET_SOURCE)
-                        if ok:
-                            st.success(f"已移除 {masked}")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error(msg)
-            else:
-                st.caption("目前無其他成員")
+                    mc1.write(f"👤 {masked}")
+                    if mc2.button("🚫 移除", key=f"kick_{idx}"):
+                        with st.spinner("移除中..."):
+                            ok, msg = remove_binding_from_db(m["Email"], CURRENT_SHEET_SOURCE, operator_email=st.session_state.user_info["Email"], book_name=DISPLAY_TITLE)
+                            if ok: st.success(f"已將 {masked} 移除"); time.sleep(1); st.rerun()
+                            else: st.error(msg)
+            else: st.caption("此帳本目前無其他成員。")
 
         st.markdown("---")
         
-        # 邀請與綁定新帳本
         c_inv, c_book = st.columns(2)
         with c_inv:
             with st.popover("➕ 邀請成員加入此帳本", use_container_width=True):
+                st.write("請輸入對方的註冊 Email")
                 invite_email = st.text_input("對方 Email")
                 if st.button("發送邀請"):
                     if invite_email:
-                        ok, msg = add_binding(invite_email, CURRENT_SHEET_SOURCE, DISPLAY_TITLE)
+                        ok, msg = add_binding(invite_email, CURRENT_SHEET_SOURCE, DISPLAY_TITLE, role="Member", operator_email=st.session_state.user_info["Email"])
                         if ok: st.success(msg)
                         else: st.error(msg)
                     else: st.warning("請輸入 Email")
         with c_book:
             with st.popover("➕ 綁定其他帳本", use_container_width=True):
+                st.write("輸入 Google Sheet 網址以新增帳本")
                 new_sheet_url = st.text_input("Google Sheet 網址")
                 new_book_name = st.text_input("帳本名稱")
                 if st.button("確認綁定"):
                     if new_sheet_url and new_book_name:
-                        # 主動綁定視為 Owner
-                        ok, msg = add_binding(st.session_state.user_info["Email"], new_sheet_url, new_book_name, "Owner")
+                        ok, msg = add_binding(st.session_state.user_info["Email"], new_sheet_url, new_book_name, "Owner", operator_email=st.session_state.user_info["Email"])
                         if ok: 
                             st.success("綁定成功！請重新登入生效"); time.sleep(2); st.cache_data.clear(); st.rerun()
                         else: st.error(msg)
