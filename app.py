@@ -59,12 +59,7 @@ st.markdown("""
     .val-green { color: #2ecc71; }
     .val-red { color: #e74c3c; }
     div.stButton > button { border-radius: 8px; font-weight: 600; }
-    .stTabs {
-        position: relative;
-        background-color: #f8f9fa;
-        z-index: 990;
-        padding-top: 10px;
-    }
+    .stTabs { position: relative; background-color: #f8f9fa; z-index: 990; padding-top: 10px;}
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] { background-color: white; border-radius: 8px 8px 0 0; border: 1px solid #dee2e6; border-bottom: none; }
     .stTabs [aria-selected="true"] { border-top: 3px solid #0d6efd; color: #0d6efd !important; }
