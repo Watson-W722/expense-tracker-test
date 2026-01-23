@@ -28,7 +28,7 @@ st.markdown("""
         color: #2c3e50;
     }
     .block-container {
-        padding-top: 4rem !important;
+        padding-top: 2rem !important;
         padding-bottom: 5rem !important;
     }
     #MainMenu {visibility: hidden;}
@@ -55,17 +55,46 @@ st.markdown("""
     .val-green { color: #2ecc71; }
     .val-red { color: #e74c3c; }
     div.stButton > button { border-radius: 8px; font-weight: 600; }
-    .stTabs { position: relative; background-color: #f8f9fa; z-index: 990; padding-top: 10px;}
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] { background-color: white; border-radius: 8px 8px 0 0; border: 1px solid #dee2e6; border-bottom: none; }
-    .stTabs [aria-selected="true"] { border-top: 3px solid #0d6efd; color: #0d6efd !important; }
-    .login-container { max-width: 500px; margin: 50px auto; padding: 40px; background: white; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }
+    .stTabs {
+        position: sticky;
+        top: 0;
+        background-color: #f8f9fa;
+        z-index: 999;
+        padding-top: 10px;
+        margin-top: -20px;
+    }
+     /* Tab 樣式微調 */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: white;
+        border-radius: 8px 8px 0 0;
+        gap: 1px;
+        padding: 10px 20px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #6c757d;
+        border: 1px solid #dee2e6;
+        border-bottom: none;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #ffffff;
+        color: #0d6efd !important;
+        border-top: 3px solid #0d6efd;
+    }
+    .login-container {
+        max-width: 600px;
+        margin: 50px auto;
+        padding: 40px;
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        text-align: center;
+    }
     .step-text { text-align: left; margin-bottom: 10px; font-size: 0.95rem; }
-    .vip-badge { background-color: #FFD700; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; }
-    .trial-badge { background-color: #87CEEB; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
-
 # ==========================================
 # 1. 核心連線模組 (含金鑰自動修復)
 # ==========================================
@@ -594,6 +623,15 @@ def check_and_run_recurring():
         st.rerun()
     st.session_state['recurring_checked'] = True
 check_and_run_recurring()
+
+# --- Header ---
+c_logo, c_title = st.columns([1, 15]) 
+with c_logo:
+    if os.path.exists("logo.png"): st.image("logo.png", width=60) 
+    else: st.write("💰")
+with c_title:
+    st.markdown("<h2 style='margin-bottom: 0; padding-top: 10px;'>我的記帳本</h2>", unsafe_allow_html=True)
+
 
 # --- 頁籤 ---
 tab1, tab2, tab3 = st.tabs(["📝 每日記帳", "📊 收支分析", "⚙️ 系統設定"])
