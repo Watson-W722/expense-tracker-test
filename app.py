@@ -355,32 +355,32 @@ def login_flow():
         # === 註冊 ===
         elif st.session_state.login_mode == "register":
             st.info("💡 新用戶請先設定您的記帳本")
-    with st.expander("👉 點此查看設定步驟 (含圖文教學)"):
-        st.markdown(f"""
-        **步驟 1：建立記帳本副本**  
-        請點擊連結建立一份屬於您的 Google Sheet：  
-        👉 [**[點此建立記帳本副本（下載後可更名）]**]({TEMPLATE_URL})
-        """)
-        
-        st.markdown("---")        
-        st.markdown("**步驟 2：共用權限給機器人**")
-        st.write("請將您的記帳本「共用」給以下機器人 Email (權限設為 **編輯者/Editor**)，系統才能寫入資料。")
-        
-        if "gcp_service_account" in st.secrets:
-            st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
-        else:
-            st.warning("⚠️ 系統尚未設定 Secrets，無法顯示機器人 Email")
-            
-        st.markdown("---")
-        
-        # 圖片處理：檢查檔案是否存在
-        if os.path.exists("guide.png"):
-            # 使用內層 expander 來收納圖片，避免畫面太長
-            with st.expander("📷 操作示意圖 (點擊展開)"):
-                st.image("guide.png", caption="請參照圖中紅框處共用給機器人", use_container_width=True)
-        else:
-            # 若無圖片，僅提示
-            st.caption("🚫 (提示：將 guide.png 放入專案資料夾即可顯示圖解)")
+            with st.expander("👉 點此查看設定步驟 (含圖文教學)"):
+                st.markdown(f"""
+                **步驟 1：建立記帳本副本**  
+                請點擊連結建立一份屬於您的 Google Sheet：  
+                👉 [**[點此建立記帳本副本（下載後可更名）]**]({TEMPLATE_URL})
+                """)
+                
+                st.markdown("---")        
+                st.markdown("**步驟 2：共用權限給機器人**")
+                st.write("請將您的記帳本「共用」給以下機器人 Email (權限設為 **編輯者/Editor**)，系統才能寫入資料。")
+                
+                if "gcp_service_account" in st.secrets:
+                    st.code(st.secrets["gcp_service_account"]["client_email"], language="text")
+                else:
+                    st.warning("⚠️ 系統尚未設定 Secrets，無法顯示機器人 Email")
+                    
+                st.markdown("---")
+                
+                # 圖片處理：檢查檔案是否存在
+                if os.path.exists("guide.png"):
+                    # 使用內層 expander 來收納圖片，避免畫面太長
+                    with st.expander("📷 操作示意圖 (點擊展開)"):
+                        st.image("guide.png", caption="請參照圖中紅框處共用給機器人", use_container_width=True)
+                else:
+                    # 若無圖片，僅提示
+                    st.caption("🚫 (提示：將 guide.png 放入專案資料夾即可顯示圖解)")
 
         email_in = st.text_input("Email").strip()
         pwd_in = st.text_input("密碼", type="password")
