@@ -153,23 +153,71 @@ def send_otp_email(to_email, code, subject="【記帳本】驗證碼"):
         return True, "驗證碼已發送"
     except Exception as e: return False, f"寄信失敗: {e}"
 
-def reset_user_password(email, new_password):
+def reset_user_password(email, new_password, new_nickname=None):
+    """重設密碼，並處理試用期重置與暱稱更新"""
+    client = get_gspread_client()
+    try:
+        admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
+        users_sheet = admin_book.worksheet("Users")
+        
+        # 尋找使用者 Row
+        cell = users_sheet.find(email)
+        if not cell: return False, "找不到使用者"
+        
+        row = cell.row
+        # 讀取舊密碼 hash (位於 D 欄 = 第 4 欄)
+        old_hash = users_sheet.cell(row, 4).value
+        
+        new_hash = hash_password(new_password)
+        
+        # 更新項目列表
+        updates = []
+        updates.append({'range': f'D{row}', 'values': [[new_hash]]}) # 更新密碼
+        
+        # [修正 4] 如果是初次啟用 (RESET_REQUIRED)，重置加入日期與到期日
+        if old_hash == "RESET_REQUIRED":
+            today = datetime.now().date()
+            expire_date = today + timedelta(days=TRIAL_DAYS)
+            updates.append({'range': f'C{row}', 'values': [[str(today)]]}) # Join_Date
+            updates.append({'range': f'F{row}', 'values': [[str(expire_date)]]}) # Expire_Date
+        
+        # [修正 2] 如果有提供新暱稱，更新 H 欄
+        if new_nickname:
+            updates.append({'range': f'H{row}', 'values': [[new_nickname]]})
+            
+        users_sheet.batch_update(updates)
+        return True, "密碼更新成功 (若是首次啟用，試用期已重置)"
+    except Exception as e: return False, f"資料庫錯誤: {e}"
+
+def update_user_nickname(email, new_nickname):
+    """更新使用者暱稱"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
         users_sheet = admin_book.worksheet("Users")
         cell = users_sheet.find(email)
         if not cell: return False, "找不到使用者"
-        new_hash = hash_password(new_password)
-        users_sheet.update_cell(cell.row, 4, new_hash)
-        return True, "密碼更新成功"
-    except Exception as e: return False, f"資料庫錯誤: {e}"
+        # 暱稱在 H 欄 (第 8 欄)
+        users_sheet.update_cell(cell.row, 8, new_nickname)
+        return True, "暱稱更新成功"
+    except Exception as e: return False, f"Error: {e}"
+
+# [修正 5] 為了在成員列表顯示暱稱，需要一個撈取所有 User Nickname 的 helper
+@st.cache_data(ttl=600)
+def get_all_users_nickname_map():
+    """回傳 {email: nickname} 的字典，用於顯示"""
+    client = get_gspread_client()
+    try:
+        admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
+        users_sheet = admin_book.worksheet("Users")
+        records = users_sheet.get_all_records()
+        return {row["Email"]: row.get("Nickname", "") for row in records}
+    except: return {}
 
 # ==========================================
 # [新增] 寫入系統日誌 (Audit Log)
 # ==========================================
 def write_system_log(operator, action, target_email, book_name, sheet_url):
-    """將操作紀錄寫入 Admin DB 的 System_Logs 分頁"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
@@ -196,13 +244,11 @@ def validate_registration_pre_check(email, sheet_url):
         admin_book = client.open_by_url(admin_url)
         users_sheet = admin_book.worksheet("Users")
         
-        # 1. 檢查 Email 是否已存在
         try:
             cell = users_sheet.find(email)
             if cell: return False, "❌ 此 Email 已存在系統中。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。"
         except: pass
 
-        # 2. 檢查帳本是否已被綁定
         try:
             bindings_sheet = admin_book.worksheet("Book_Bindings")
             b_records = bindings_sheet.get_all_records()
@@ -211,13 +257,7 @@ def validate_registration_pre_check(email, sheet_url):
             if not df_bind.empty and "Sheet_URL" in df_bind.columns:
                 conflict = df_bind[df_bind["Sheet_URL"] == sheet_url]
                 if not conflict.empty:
-                    # 如果有人綁定過，找出他是誰
-                    owner_record = conflict[conflict["Role"] == "Owner"]
-                    if not owner_record.empty:
-                        owner_email = owner_record.iloc[0]["Email"]
-                    else:
-                        owner_email = conflict.iloc[0]["Email"] # Fallback
-
+                    owner_email = conflict.iloc[0]["Email"]
                     owner_nickname = ""
                     try:
                         records_u = users_sheet.get_all_records()
@@ -236,7 +276,7 @@ def validate_registration_pre_check(email, sheet_url):
         return False, f"系統檢查失敗: {e}"
 
 # ==========================================
-# [核心] 使用者與多帳本管理 (已更新 Role 邏輯)
+# [核心] 使用者與多帳本管理
 # ==========================================
 def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_register=False):
     client = get_gspread_client()
@@ -247,8 +287,6 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
     try:
         admin_book = client.open_by_url(admin_url)
         users_sheet = admin_book.worksheet("Users")
-        
-        # [修正] Bindings 表包含 Role
         try: bindings_sheet = admin_book.worksheet("Book_Bindings")
         except: bindings_sheet = admin_book.add_worksheet("Book_Bindings", 100, 4); bindings_sheet.append_row(["Email", "Sheet_URL", "Book_Name", "Role"])
         
@@ -283,7 +321,6 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
             users_sheet.append_row(row_data)
             
             book_title = get_sheet_title_safe(user_sheet_name)
-            # [修正] 註冊成功，自動成為 Owner
             bindings_sheet.append_row([email, user_sheet_name, book_title, "Owner"])
             
             write_system_log(email, "註冊並建立帳本(Owner)", email, book_title, user_sheet_name)
@@ -314,11 +351,9 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
         books_list = []
         if not user_books.empty:
             for _, row in user_books.iterrows():
-                # [修正] 讀取 Role 欄位 (相容舊版 Owner 標題，優先讀取 Role)
                 role = row.get("Role", row.get("Owner", "Member"))
                 books_list.append({"name": row["Book_Name"], "url": row["Sheet_URL"], "role": role})
         else:
-            # Fallback for old users without binding records
             books_list.append({"name": "我的記帳本", "url": user_info.get("Sheet_Name", ""), "role": "Owner"})
         
         user_info["Books"] = books_list
@@ -333,31 +368,26 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
     except Exception as e: return False, f"Login Error: {e}"
 
 def add_binding(target_email, sheet_url, book_name, role="Member", operator_email=None):
-    """新增綁定：如果是新帳本 role='Owner'，如果是邀請 role='Member'"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
         users_sheet = admin_book.worksheet("Users")
         bindings_sheet = admin_book.worksheet("Book_Bindings")
         
-        # 1. 檢查使用者是否存在
         try: cell = users_sheet.find(target_email)
         except: cell = None
 
         if not cell:
-            # 邀請新使用者：建立空帳號
             today = str(datetime.now().date())
             row = [target_email, "", today, "RESET_REQUIRED", "Pending", today, "Trial", target_email.split("@")[0]]
             users_sheet.append_row(row)
         
-        # 2. 檢查該使用者是否已綁定此帳本
         existing = bindings_sheet.get_all_records()
         df = pd.DataFrame(existing)
         if not df.empty:
             check = df[(df["Email"] == target_email) & (df["Sheet_URL"] == sheet_url)]
             if not check.empty: return True, "使用者已在此帳本中"
         
-        # 3. [重要] 如果是要綁定為 Owner (新增帳本)，需檢查該帳本是否已經有 Owner
         if role == "Owner":
             if not df.empty:
                 owner_check = df[(df["Sheet_URL"] == sheet_url) & (df["Role"] == "Owner")]
@@ -367,19 +397,17 @@ def add_binding(target_email, sheet_url, book_name, role="Member", operator_emai
         bindings_sheet.append_row([target_email, sheet_url, book_name, role])
         
         op = operator_email if operator_email else "System"
-        action = "新增帳本(Owner)" if role == "Owner" else "邀請成員(Member)"
+        action = "新增綁定" if role == "Owner" else "邀請成員"
         write_system_log(op, action, target_email, book_name, sheet_url)
         
-        return True, "操作成功！"
+        return True, "邀請/綁定成功！"
     except Exception as e: return False, f"Error: {e}"
 
 def remove_binding_from_db(target_email, sheet_url, operator_email=None, book_name="Unknown"):
-    """刪除 Book_Bindings 中的特定紀錄"""
     client = get_gspread_client()
     try:
         admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
         bindings_sheet = admin_book.worksheet("Book_Bindings")
-        
         records = bindings_sheet.get_all_records()
         row_to_delete = None
         for i, row in enumerate(records):
@@ -387,17 +415,14 @@ def remove_binding_from_db(target_email, sheet_url, operator_email=None, book_na
                 row_to_delete = i + 2 
                 book_name = row["Book_Name"]
                 break
-        
         if row_to_delete:
             bindings_sheet.delete_rows(row_to_delete)
             op = operator_email if operator_email else target_email
             action = "解除綁定/移除成員"
             write_system_log(op, action, target_email, book_name, sheet_url)
             return True, "解除綁定成功"
-        else:
-            return False, "找不到該綁定資料"
-    except Exception as e:
-        return False, f"刪除失敗: {e}"
+        else: return False, "找不到該綁定資料"
+    except Exception as e: return False, f"刪除失敗: {e}"
 
 def get_book_members(sheet_url):
     client = get_gspread_client()
@@ -440,7 +465,7 @@ def login_flow():
     if st.session_state.login_mode == "reset":
         if st.button("⬅️ 返回登入", use_container_width=True):
             st.session_state.login_mode = "login"; st.rerun()
-        st.markdown("#### 🔒 重設密碼")
+        st.markdown("#### 🔒 重設密碼 / 啟用帳號")
     elif st.session_state.login_mode == "register":
          if st.button("⬅️ 返回登入", use_container_width=True):
             st.session_state.login_mode = "login"; st.rerun()
@@ -454,7 +479,7 @@ def login_flow():
                 st.session_state.login_mode = "register"; st.session_state.reg_stage = 1; st.rerun()
 
     with st.container():
-        # === 忘記密碼 ===
+        # === 忘記密碼 / 啟用帳號 (Reset/Activate) ===
         if st.session_state.login_mode == "reset":
             if st.session_state.reset_stage == 1:
                 st.info("請輸入 Email，我們將發送驗證碼給您。")
@@ -472,14 +497,23 @@ def login_flow():
                 st.success(f"驗證碼已寄至 {st.session_state.reset_email}")
                 otp_input = st.text_input("輸入 6 位數驗證碼", key="otp_input")
                 new_pwd = st.text_input("設定新密碼", type="password", key="reset_new_pwd")
+                # [修正 2] 忘記密碼流程中，加入設定暱稱欄位
+                new_nick = st.text_input("設定您的暱稱 (若為初次啟用請填寫)", key="reset_new_nick")
+                
                 if st.button("🔄 確認重設", type="primary", use_container_width=True):
                     if otp_input == st.session_state.otp_code and new_pwd:
-                        ok, msg = reset_user_password(st.session_state.reset_email, new_pwd)
-                        if ok: st.success("🎉 密碼已更新，請登入"); st.session_state.login_mode = "login"; st.session_state.reset_stage = 1; time.sleep(2); st.rerun()
+                        # [修正 2] 傳遞 new_nick
+                        ok, msg = reset_user_password(st.session_state.reset_email, new_pwd, new_nickname=new_nick)
+                        if ok: 
+                            st.success("🎉 帳號設定成功，請重新登入")
+                            st.session_state.login_mode = "login"
+                            st.session_state.reset_stage = 1
+                            time.sleep(2)
+                            st.rerun()
                         else: st.error(msg)
                     else: st.error("驗證碼錯誤或密碼為空")
 
-        # === 註冊 (含 OTP 與 Pre-Check) ===
+        # === 註冊 (含 OTP) ===
         elif st.session_state.login_mode == "register":
             if st.session_state.reg_stage == 1:
                 st.info("💡 新用戶請先設定您的記帳本 (需 Email 驗證)")
@@ -504,7 +538,7 @@ def login_flow():
                         if not is_valid_email(email_in):
                             st.error("❌ Email 格式不正確")
                         else:
-                            st.cache_data.clear() # 清快取
+                            st.cache_data.clear() 
                             with st.spinner("檢查帳戶狀態中..."):
                                 is_valid, msg = validate_registration_pre_check(email_in, sheet_in)
                             
@@ -903,7 +937,6 @@ with tab2:
                 fig_pie = px.pie(pd_pie, values="Amount_Def", names="Main_Category", hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-# ================= Tab 3: 設定管理 =================
 with tab3:
     st.markdown("##### ⚙️ 系統資料庫")
     if 'temp_cat_map' not in st.session_state: st.session_state.temp_cat_map = cat_mapping
@@ -911,39 +944,47 @@ with tab3:
     if 'temp_curr_list' not in st.session_state: st.session_state.temp_curr_list = currency_list_custom
     if 'temp_default_curr' not in st.session_state: st.session_state.temp_default_curr = default_currency_setting
 
-    # [修正] 帳本與成員管理區塊 (Layout 重構)
+    # [修正] 帳本與成員管理區塊
     with st.expander("📚 帳本與成員管理", expanded=True):
         
-        # 1. 取得使用者的帳本列表
+        # [新增] 0. 個人資料設定 (修改暱稱)
+        st.markdown("###### 👤 個人資料設定")
+        c_nick_in, c_nick_btn = st.columns([3, 1])
+        current_nick = st.session_state.user_info.get("Nickname", "")
+        new_nick_val = c_nick_in.text_input("修改顯示暱稱", value=current_nick, label_visibility="collapsed")
+        
+        if c_nick_btn.button("💾 儲存暱稱"):
+            if new_nick_val and new_nick_val != current_nick:
+                with st.spinner("更新中..."):
+                    ok, msg = update_user_nickname(st.session_state.user_info["Email"], new_nick_val)
+                    if ok:
+                        st.session_state.user_info["Nickname"] = new_nick_val
+                        st.success(msg)
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+        
+        st.markdown("---")
+
         user_books = st.session_state.user_info.get("Books", [])
         
         if not user_books:
             st.info("目前尚無綁定任何帳本")
         else:
-            # --- Layout 第一層：選擇帳本 + 頂部解除按鈕 ---
             c_sel, c_btn = st.columns([3, 1])
-            
             with c_sel:
                 book_names = [b["name"] for b in user_books]
-                # 預設選取當前操作的帳本，若無則選第一個
-                try: 
-                    default_idx = next(i for i, b in enumerate(user_books) if b["url"] == CURRENT_SHEET_SOURCE)
-                except: 
-                    default_idx = 0
-                
-                # 這裡的選擇是「管理用」，不會影響全域 CURRENT_SHEET_SOURCE
+                try: default_idx = next(i for i, b in enumerate(user_books) if b["url"] == CURRENT_SHEET_SOURCE)
+                except: default_idx = 0
                 selected_manage_book_name = st.selectbox("選擇要管理的帳本", book_names, index=default_idx, key="manage_book_sel")
             
-            # 取得選定帳本的詳細資料 (Role, URL)
             target_book = next((b for b in user_books if b["name"] == selected_manage_book_name), None)
             target_role = target_book.get("role", "Member")
             target_url = target_book.get("url", "")
 
             with c_btn:
-                # 為了排版對齊，加個空行讓按鈕往下
-                st.write("") 
-                st.write("") 
-                # Owner 不能按解除，Member 可以
+                st.write(""); st.write("") 
                 is_owner = (target_role == "Owner")
                 btn_label = "無法解除" if is_owner else "❌ 解除綁定"
                 btn_help = "擁有者無法解除綁定，請聯絡管理員" if is_owner else "退出此帳本"
@@ -960,7 +1001,6 @@ with tab3:
                             st.success(f"已退出 {selected_manage_book_name}")
                             time.sleep(1)
                             st.cache_data.clear()
-                            # 如果刪除的是當前正在用的，清除 session 讓系統重抓
                             if target_url == st.session_state.get("current_book_url"):
                                 del st.session_state["current_book_url"]
                             st.rerun()
@@ -969,48 +1009,46 @@ with tab3:
 
             st.markdown("---")
 
-            # --- Layout 第二層：成員列表 (Table Header) ---
-            # 撈取該帳本的所有成員
             members = get_book_members(target_url)
             
+            # [修正 5] 預先撈取所有 User 的 Nickname Map，提升顯示速度
+            nickname_map = get_all_users_nickname_map()
+
             if members:
-                # 表頭
-                h1, h2, h3 = st.columns([3, 2, 2])
+                # [修正 5] 表頭加入暱稱欄位
+                h1, h2, h3, h4 = st.columns([3, 2, 2, 2])
                 h1.markdown("**帳號**")
-                h2.markdown("**角色**")
-                h3.markdown("**操作**")
+                h2.markdown("**暱稱**")
+                h3.markdown("**角色**")
+                h4.markdown("**操作**")
                 
                 my_email = st.session_state.user_info["Email"]
 
                 for idx, m in enumerate(members):
-                    r1, r2, r3 = st.columns([3, 2, 2])
+                    r1, r2, r3, r4 = st.columns([3, 2, 2, 2])
                     
-                    # 1. 帳號顯示 (若是自己顯示「自己」)
                     is_me = (m["Email"] == my_email)
-                    display_name = f"{mask_email(m['Email'])} (自己)" if is_me else mask_email(m["Email"])
-                    r1.write(display_name)
+                    display_email = f"{mask_email(m['Email'])} (自己)" if is_me else mask_email(m["Email"])
+                    r1.write(display_email)
                     
-                    # 2. 角色顯示
+                    # 顯示暱稱
+                    nick = nickname_map.get(m["Email"], "-")
+                    r2.write(nick)
+                    
                     role = m.get("Role", "Member")
-                    if role == "Owner":
-                        r2.markdown(f"<span style='color:orange; font-weight:bold;'>👑 擁有者</span>", unsafe_allow_html=True)
-                    else:
-                        r2.caption("成員")
-                    
-                    # 3. 操作按鈕邏輯
-                    # 情況 A: 我是 Owner -> 可以踢掉別人 (不能踢自己)
-                    # 情況 B: 我是 Member -> 可以退出自己 (不能踢別人)
+                    if role == "Owner": r3.markdown(f"<span style='color:orange; font-weight:bold;'>👑 擁有者</span>", unsafe_allow_html=True)
+                    else: r3.caption("成員")
                     
                     if target_role == "Owner":
                         if not is_me:
-                            if r3.button("🚫 移除", key=f"tbl_kick_{idx}"):
+                            if r4.button("🚫 移除", key=f"tbl_kick_{idx}"):
                                 ok, msg = remove_binding_from_db(m["Email"], target_url, operator_email=my_email, book_name=selected_manage_book_name)
                                 if ok: st.toast("移除成功"); time.sleep(1); st.rerun()
                                 else: st.error(msg)
                     
                     elif target_role == "Member":
                         if is_me:
-                            if r3.button("🚪 解除綁定", key=f"tbl_leave_{idx}"):
+                            if r4.button("🚪 解除綁定", key=f"tbl_leave_{idx}"):
                                 ok, msg = remove_binding_from_db(my_email, target_url, operator_email=my_email, book_name=selected_manage_book_name)
                                 if ok: 
                                     st.success("已退出"); time.sleep(1); st.cache_data.clear()
@@ -1022,20 +1060,21 @@ with tab3:
 
         st.markdown("---")
         
-        # 邀請與綁定新帳本 (維持原樣)
         c_inv, c_book = st.columns(2)
         with c_inv:
             with st.popover("➕ 邀請成員加入此帳本", use_container_width=True):
                 st.write("請輸入對方的註冊 Email")
                 invite_email = st.text_input("對方 Email")
-                # 這裡要用 selected_manage_book_name 相關的 URL
                 if st.button("發送邀請"):
-                    # 再次確認當前選擇的帳本 url
                     target_book_invite = next((b for b in user_books if b["name"] == selected_manage_book_name), None)
                     if target_book_invite:
                         if invite_email:
                             ok, msg = add_binding(invite_email, target_book_invite["url"], selected_manage_book_name, role="Member", operator_email=st.session_state.user_info["Email"])
-                            if ok: st.success(msg)
+                            # [修正 1] 邀請成功後強制關閉 Popover
+                            if ok: 
+                                st.success(msg)
+                                time.sleep(1)
+                                st.rerun()
                             else: st.error(msg)
                         else: st.warning("請輸入 Email")
         with c_book:
