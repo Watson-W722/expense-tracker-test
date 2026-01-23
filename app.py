@@ -903,6 +903,7 @@ with tab2:
                 fig_pie = px.pie(pd_pie, values="Amount_Def", names="Main_Category", hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig_pie, use_container_width=True)
 
+# ================= Tab 3: 設定管理 =================
 with tab3:
     st.markdown("##### ⚙️ 系統資料庫")
     if 'temp_cat_map' not in st.session_state: st.session_state.temp_cat_map = cat_mapping
@@ -910,77 +911,133 @@ with tab3:
     if 'temp_curr_list' not in st.session_state: st.session_state.temp_curr_list = currency_list_custom
     if 'temp_default_curr' not in st.session_state: st.session_state.temp_default_curr = default_currency_setting
 
+    # [修正] 帳本與成員管理區塊 (Layout 重構)
     with st.expander("📚 帳本與成員管理", expanded=True):
-        st.caption(f"當前操作帳本：{DISPLAY_TITLE}")
         
-        st.markdown("###### 📋 我綁定的帳本")
+        # 1. 取得使用者的帳本列表
         user_books = st.session_state.user_info.get("Books", [])
         
-        if user_books:
-            for idx, book in enumerate(user_books):
-                c1, c2, c3 = st.columns([3, 2, 2])
-                c1.write(f"📖 {book['name']}")
-                role_str = book.get('role', 'Member')
-                if role_str == "Owner":
-                    c2.markdown(f"<span style='color:orange; font-weight:bold;'>👑 擁有者</span>", unsafe_allow_html=True)
-                else:
-                    c2.caption("成員")
-
-                if role_str == "Owner":
-                    c3.caption("無法解除 (擁有者)")
-                else:
-                    if c3.button("🚪 退出帳本", key=f"leave_{idx}"):
-                        with st.spinner("處理中..."):
-                            ok, msg = remove_binding_from_db(st.session_state.user_info["Email"], book["url"], operator_email=st.session_state.user_info["Email"], book_name=book['name'])
-                            if ok:
-                                st.success(f"已退出 {book['name']}")
-                                time.sleep(1)
-                                st.cache_data.clear()
-                                if book["url"] == st.session_state.get("current_book_url"):
-                                    del st.session_state["current_book_url"]
-                                st.rerun()
-                            else:
-                                st.error(msg)
-        else:
+        if not user_books:
             st.info("目前尚無綁定任何帳本")
-
-        current_book_role = "Member"
-        for b in user_books:
-            if b["url"] == CURRENT_SHEET_SOURCE:
-                current_book_role = b.get("role", "Member")
-                break
-        
-        if current_book_role == "Owner":
-            st.markdown("---")
-            st.markdown(f"###### 👥 管理 **{DISPLAY_TITLE}** 的成員")
-            members = get_book_members(CURRENT_SHEET_SOURCE)
-            other_members = [m for m in members if m["Email"] != st.session_state.user_info["Email"]]
+        else:
+            # --- Layout 第一層：選擇帳本 + 頂部解除按鈕 ---
+            c_sel, c_btn = st.columns([3, 1])
             
-            if other_members:
-                for idx, m in enumerate(other_members):
-                    mc1, mc2 = st.columns([4, 1])
-                    masked = mask_email(m["Email"])
-                    mc1.write(f"👤 {masked}")
-                    if mc2.button("🚫 移除", key=f"kick_{idx}"):
-                        with st.spinner("移除中..."):
-                            ok, msg = remove_binding_from_db(m["Email"], CURRENT_SHEET_SOURCE, operator_email=st.session_state.user_info["Email"], book_name=DISPLAY_TITLE)
-                            if ok: st.success(f"已將 {masked} 移除"); time.sleep(1); st.rerun()
-                            else: st.error(msg)
-            else: st.caption("此帳本目前無其他成員。")
+            with c_sel:
+                book_names = [b["name"] for b in user_books]
+                # 預設選取當前操作的帳本，若無則選第一個
+                try: 
+                    default_idx = next(i for i, b in enumerate(user_books) if b["url"] == CURRENT_SHEET_SOURCE)
+                except: 
+                    default_idx = 0
+                
+                # 這裡的選擇是「管理用」，不會影響全域 CURRENT_SHEET_SOURCE
+                selected_manage_book_name = st.selectbox("選擇要管理的帳本", book_names, index=default_idx, key="manage_book_sel")
+            
+            # 取得選定帳本的詳細資料 (Role, URL)
+            target_book = next((b for b in user_books if b["name"] == selected_manage_book_name), None)
+            target_role = target_book.get("role", "Member")
+            target_url = target_book.get("url", "")
+
+            with c_btn:
+                # 為了排版對齊，加個空行讓按鈕往下
+                st.write("") 
+                st.write("") 
+                # Owner 不能按解除，Member 可以
+                is_owner = (target_role == "Owner")
+                btn_label = "無法解除" if is_owner else "❌ 解除綁定"
+                btn_help = "擁有者無法解除綁定，請聯絡管理員" if is_owner else "退出此帳本"
+                
+                if st.button(btn_label, key="top_unbind_btn", disabled=is_owner, type="secondary", help=btn_help, use_container_width=True):
+                    with st.spinner("處理中..."):
+                        ok, msg = remove_binding_from_db(
+                            st.session_state.user_info["Email"], 
+                            target_url, 
+                            operator_email=st.session_state.user_info["Email"], 
+                            book_name=selected_manage_book_name
+                        )
+                        if ok:
+                            st.success(f"已退出 {selected_manage_book_name}")
+                            time.sleep(1)
+                            st.cache_data.clear()
+                            # 如果刪除的是當前正在用的，清除 session 讓系統重抓
+                            if target_url == st.session_state.get("current_book_url"):
+                                del st.session_state["current_book_url"]
+                            st.rerun()
+                        else:
+                            st.error(msg)
+
+            st.markdown("---")
+
+            # --- Layout 第二層：成員列表 (Table Header) ---
+            # 撈取該帳本的所有成員
+            members = get_book_members(target_url)
+            
+            if members:
+                # 表頭
+                h1, h2, h3 = st.columns([3, 2, 2])
+                h1.markdown("**帳號**")
+                h2.markdown("**角色**")
+                h3.markdown("**操作**")
+                
+                my_email = st.session_state.user_info["Email"]
+
+                for idx, m in enumerate(members):
+                    r1, r2, r3 = st.columns([3, 2, 2])
+                    
+                    # 1. 帳號顯示 (若是自己顯示「自己」)
+                    is_me = (m["Email"] == my_email)
+                    display_name = f"{mask_email(m['Email'])} (自己)" if is_me else mask_email(m["Email"])
+                    r1.write(display_name)
+                    
+                    # 2. 角色顯示
+                    role = m.get("Role", "Member")
+                    if role == "Owner":
+                        r2.markdown(f"<span style='color:orange; font-weight:bold;'>👑 擁有者</span>", unsafe_allow_html=True)
+                    else:
+                        r2.caption("成員")
+                    
+                    # 3. 操作按鈕邏輯
+                    # 情況 A: 我是 Owner -> 可以踢掉別人 (不能踢自己)
+                    # 情況 B: 我是 Member -> 可以退出自己 (不能踢別人)
+                    
+                    if target_role == "Owner":
+                        if not is_me:
+                            if r3.button("🚫 移除", key=f"tbl_kick_{idx}"):
+                                ok, msg = remove_binding_from_db(m["Email"], target_url, operator_email=my_email, book_name=selected_manage_book_name)
+                                if ok: st.toast("移除成功"); time.sleep(1); st.rerun()
+                                else: st.error(msg)
+                    
+                    elif target_role == "Member":
+                        if is_me:
+                            if r3.button("🚪 解除綁定", key=f"tbl_leave_{idx}"):
+                                ok, msg = remove_binding_from_db(my_email, target_url, operator_email=my_email, book_name=selected_manage_book_name)
+                                if ok: 
+                                    st.success("已退出"); time.sleep(1); st.cache_data.clear()
+                                    if target_url == st.session_state.get("current_book_url"): del st.session_state["current_book_url"]
+                                    st.rerun()
+                                else: st.error(msg)
+            else:
+                st.caption("無法讀取成員列表")
 
         st.markdown("---")
         
+        # 邀請與綁定新帳本 (維持原樣)
         c_inv, c_book = st.columns(2)
         with c_inv:
             with st.popover("➕ 邀請成員加入此帳本", use_container_width=True):
                 st.write("請輸入對方的註冊 Email")
                 invite_email = st.text_input("對方 Email")
+                # 這裡要用 selected_manage_book_name 相關的 URL
                 if st.button("發送邀請"):
-                    if invite_email:
-                        ok, msg = add_binding(invite_email, CURRENT_SHEET_SOURCE, DISPLAY_TITLE, role="Member", operator_email=st.session_state.user_info["Email"])
-                        if ok: st.success(msg)
-                        else: st.error(msg)
-                    else: st.warning("請輸入 Email")
+                    # 再次確認當前選擇的帳本 url
+                    target_book_invite = next((b for b in user_books if b["name"] == selected_manage_book_name), None)
+                    if target_book_invite:
+                        if invite_email:
+                            ok, msg = add_binding(invite_email, target_book_invite["url"], selected_manage_book_name, role="Member", operator_email=st.session_state.user_info["Email"])
+                            if ok: st.success(msg)
+                            else: st.error(msg)
+                        else: st.warning("請輸入 Email")
         with c_book:
             with st.popover("➕ 綁定其他帳本", use_container_width=True):
                 st.write("輸入 Google Sheet 網址以新增帳本")
