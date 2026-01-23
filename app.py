@@ -59,16 +59,29 @@ st.markdown("""
     .metric-value { font-size: 1.6rem; font-weight: 700; color: #2c3e50; }
     .val-green { color: #2ecc71; }
     .val-red { color: #e74c3c; }
+    /* 按鈕樣式 */
     div.stButton > button { border-radius: 8px; font-weight: 600; }
-    .stTabs {
-        position: relative;
-        background-color: #f8f9fa;
-        z-index: 990;
-        padding-top: 10px;
+    
+    /* Tab 樣式微調 */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: white;
+        border-radius: 8px 8px 0 0;
+        gap: 1px;
+        padding: 10px 20px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #6c757d;
+        border: 1px solid #dee2e6;
+        border-bottom: none;
     }
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] { background-color: white; border-radius: 8px 8px 0 0; border: 1px solid #dee2e6; border-bottom: none; }
-    .stTabs [aria-selected="true"] { border-top: 3px solid #0d6efd; color: #0d6efd !important; }
+    .stTabs [aria-selected="true"] {
+        background-color: #ffffff;
+        color: #0d6efd !important;
+        border-top: 3px solid #0d6efd;
+    }
     .login-container { max-width: 500px; margin: 30px auto; padding: 40px; background: white; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }
     .vip-badge { background-color: #FFD700; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; }
     .trial-badge { background-color: #87CEEB; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; }
@@ -629,7 +642,7 @@ with st.sidebar:
     nickname_display = user_info.get("Nickname", "")
     if not nickname_display: nickname_display = user_info.get("Email", "訪客").split("@")[0]
     
-    tz_options = {"台灣/北京 (UTC+8)": 8, "日本/韓國 (UTC+9)": 9, "泰國 (UTC+7)": 7, "美東 (UTC-4)": -4, "歐洲 (UTC+1)": 1}
+    tz_options = {"台灣/新加坡 (UTC+8)": 8, "日本/韓國 (UTC+9)": 9, "泰國 (UTC+7)": 7, "美東 (UTC-4)": -4, "歐洲 (UTC+1)": 1}
     selected_tz_label = st.selectbox("當前位置時區", list(tz_options.keys()), index=0)
     user_offset = tz_options[selected_tz_label]; today_date = get_user_date(user_offset)
     st.info(f"日期：{today_date}")
