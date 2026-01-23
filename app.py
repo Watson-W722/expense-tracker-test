@@ -997,76 +997,86 @@ with tab3:
                         else:
                             st.error(msg)
 
-            st.markdown("---")
-
             members = get_book_members(target_url)
             nickname_map = get_all_users_nickname_map()
 
             if members:
-                # [修正 Layout] 調整比例，給操作區更多空間
-                # 3.5 (帳號) | 2 (暱稱) | 1.5 (角色) | 3 (操作)
-                h1, h2, h3, h4 = st.columns([3.5, 2, 1.5, 3])
-                h1.markdown("**帳號**")
-                h2.markdown("**暱稱**")
-                h3.markdown("**角色**")
-                h4.markdown("**操作**")
-                
+                st.caption(f"共 {len(members)} 位成員")
                 my_email = st.session_state.user_info["Email"]
 
                 for idx, m in enumerate(members):
-                    r1, r2, r3, r4 = st.columns([3.5, 2, 1.5, 3])
-                    
-                    is_me = (m["Email"] == my_email)
-                    display_email = f"{mask_email(m['Email'])} (自己)" if is_me else mask_email(m["Email"])
-                    r1.write(display_email)
-                    
-                    nick = nickname_map.get(m["Email"], "-")
-                    r2.write(nick)
-                    
-                    role = m.get("Role", "Member")
-                    if role == "Owner": r3.markdown(f"<span style='color:orange; font-weight:bold;'>👑 擁有者</span>", unsafe_allow_html=True)
-                    else: r3.caption("成員")
-                    
-                    # [重點修正] 操作按鈕並排邏輯
-                    with r4:
-                        if target_role == "Owner":
-                            if not is_me:
-                                # 使用巢狀 columns 將按鈕並排
-                                b1, b2 = st.columns(2)
-                                with b1:
-                                    if st.button("🚫 移除", key=f"tbl_kick_{idx}", use_container_width=True):
-                                        ok, msg = remove_binding_from_db(m["Email"], target_url, operator_email=my_email, book_name=selected_manage_book_name)
-                                        if ok: st.toast("移除成功"); time.sleep(1); st.rerun()
-                                        else: st.error(msg)
-                                
-                                with b2:
-                                    with st.popover("👑 移轉", use_container_width=True):
-                                        st.write(f"確定移轉給 {nick}？")
-                                        st.caption("移轉後您將變為普通成員。")
-                                        if st.button("確認移轉", key=f"transfer_{idx}"):
-                                            with st.spinner("處理中..."):
-                                                ok, msg = transfer_book_ownership(target_url, my_email, m["Email"], book_name=selected_manage_book_name)
-                                                if ok:
-                                                    st.success(msg)
-                                                    st.cache_data.clear()
-                                                    time.sleep(2)
-                                                    st.rerun()
-                                                else:
-                                                    st.error(msg)
+                    # 【UI 重點】使用 container(border=True) 建立卡片感
+                    with st.container(border=True):
+                        # 將卡片分為：[左側資訊區 (70%)] [右側操作區 (30%)]
+                        c_info, c_action = st.columns([0.7, 0.3])
                         
-                        elif target_role == "Member":
-                            if is_me:
-                                if st.button("🚪 退出", key=f"tbl_leave_{idx}"):
-                                    ok, msg = remove_binding_from_db(my_email, target_url, operator_email=my_email, book_name=selected_manage_book_name)
-                                    if ok: 
-                                        st.success("已退出"); time.sleep(1); st.cache_data.clear()
-                                        if target_url == st.session_state.get("current_book_url"): del st.session_state["current_book_url"]
-                                        st.rerun()
-                                    else: st.error(msg)
+                        # --- 左側：資訊區 ---
+                        with c_info:
+                            is_me = (m["Email"] == my_email)
+                            nick = nickname_map.get(m["Email"], "-")
+                            role = m.get("Role", "Member")
+                            
+                            # 第一行：暱稱 + 角色圖示
+                            if role == "Owner":
+                                st.markdown(f"**{nick}** <span style='background:#FFF3CD; color:#856404; padding:2px 6px; border-radius:4px; font-size:0.8em;'>👑 擁有者</span>", unsafe_allow_html=True)
+                            else:
+                                st.markdown(f"**{nick}**", unsafe_allow_html=True)
+                            
+                            # 第二行：Email (使用 caption 縮小字體，適合手機閱讀)
+                            display_email = f"{mask_email(m['Email'])} (自己)" if is_me else mask_email(m["Email"])
+                            st.caption(f"📧 {display_email}")
+
+                        # --- 右側：操作區 (收納進 Popover) ---
+                        with c_action:
+                            # 垂直置中調整 (Streamlit 小技巧)
+                            st.write("") 
+                            
+                            # 判斷權限
+                            # 只有 Owner 可以管理其他人
+                            if target_role == "Owner":
+                                if not is_me:
+                                    # 使用 Popover 收納按鈕，解決手機版按鈕過大問題
+                                    with st.popover("⚙️ 管理", use_container_width=True):
+                                        st.write(f"對 {nick} 執行操作：")
+                                        
+                                        # 移除按鈕
+                                        if st.button("🚫 移除成員", key=f"kick_{idx}", use_container_width=True):
+                                            ok, msg = remove_binding_from_db(m["Email"], target_url, operator_email=my_email, book_name=selected_manage_book_name)
+                                            if ok: st.toast("移除成功"); time.sleep(1); st.rerun()
+                                            else: st.error(msg)
+                                        
+                                        # 移轉按鈕
+                                        with st.expander("👑 移轉擁有權"):
+                                            st.warning("移轉後您將變為普通成員！")
+                                            if st.button("確認移轉", key=f"transfer_{idx}", use_container_width=True):
+                                                with st.spinner("處理中..."):
+                                                    ok, msg = transfer_book_ownership(target_url, my_email, m["Email"], book_name=selected_manage_book_name)
+                                                    if ok:
+                                                        st.success(msg)
+                                                        st.cache_data.clear()
+                                                        time.sleep(2)
+                                                        st.rerun()
+                                                    else:
+                                                        st.error(msg)
+                                else:
+                                    # 自己是 Owner
+                                    st.caption("您是擁有者")
+
+                            elif target_role == "Member":
+                                if is_me:
+                                    if st.button("🚪 退出", key=f"leave_{idx}", type="primary", use_container_width=True):
+                                        ok, msg = remove_binding_from_db(my_email, target_url, operator_email=my_email, book_name=selected_manage_book_name)
+                                        if ok: 
+                                            st.success("已退出"); time.sleep(1); st.cache_data.clear()
+                                            if target_url == st.session_state.get("current_book_url"): del st.session_state["current_book_url"]
+                                            st.rerun()
+                                        else: st.error(msg)
+                                else:
+                                    # Member 看別人 -> 無權限
+                                    st.caption("成員")
+
             else:
                 st.caption("無法讀取成員列表")
-
-        st.markdown("---")
         
         c_inv, c_book = st.columns(2)
         with c_inv:
