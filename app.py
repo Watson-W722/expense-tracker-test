@@ -153,6 +153,54 @@ def reset_user_password(email, new_password):
     except Exception as e: return False, f"資料庫錯誤: {e}"
 
 # ==========================================
+# [新增] 註冊前置檢查 (防呆檢查)
+# ==========================================
+def validate_registration_pre_check(email, sheet_url):
+    """在發送 OTP 之前，先檢查 Email 是否存在，以及帳本是否被綁定"""
+    client = get_gspread_client()
+    if not client: return False, "API Error"
+    admin_url = st.secrets.get("admin_sheet_url")
+    
+    try:
+        admin_book = client.open_by_url(admin_url)
+        users_sheet = admin_book.worksheet("Users")
+        
+        # 1. 檢查 Email 是否已存在
+        try:
+            cell = users_sheet.find(email)
+            if cell:
+                return False, "❌ 此 Email 已存在系統中。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。"
+        except: pass # find 失敗代表沒找到，安全
+
+        # 2. 檢查帳本是否已被綁定
+        try:
+            bindings_sheet = admin_book.worksheet("Book_Bindings")
+            b_records = bindings_sheet.get_all_records()
+            df_bind = pd.DataFrame(b_records)
+            
+            if not df_bind.empty and "Sheet_URL" in df_bind.columns:
+                conflict = df_bind[df_bind["Sheet_URL"] == sheet_url]
+                if not conflict.empty:
+                    owner_email = conflict.iloc[0]["Email"]
+                    # 抓取擁有者暱稱以顯示友善訊息
+                    owner_nickname = ""
+                    try:
+                        records_u = users_sheet.get_all_records()
+                        df_u = pd.DataFrame(records_u)
+                        o_row = df_u[df_u["Email"] == owner_email]
+                        if not o_row.empty: owner_nickname = o_row.iloc[0]["Nickname"]
+                    except: pass
+                    
+                    display_name = owner_nickname if owner_nickname else mask_email(owner_email)
+                    return False, f"❌ 此帳本已被 **{display_name}** 綁定。請聯繫該擁有者邀請您加入 (勿重複註冊)。"
+        except: pass # 如果 Book_Bindings 還不存在，代表沒人綁過，安全
+
+        return True, "OK"
+
+    except Exception as e:
+        return False, f"系統檢查失敗: {e}"
+
+# ==========================================
 # [核心] 使用者與多帳本管理
 # ==========================================
 def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_register=False):
@@ -178,26 +226,10 @@ def handle_user_login(email, password, user_sheet_name=None, nickname=None, is_r
         pwd_hash = hash_password(password)
         today = datetime.now().date()
 
-        # ---------------- 註冊模式邏輯 ----------------
+        # ---------------- 註冊模式邏輯 (最後確認寫入) ----------------
         if is_register:
-            if not user_row.empty:
-                return False, "❌ 此 Email 已存在系統中（可能已被邀請或註冊）。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。"
-
-            b_records = bindings_sheet.get_all_records()
-            df_bind = pd.DataFrame(b_records)
-            
-            if not df_bind.empty and "Sheet_URL" in df_bind.columns:
-                conflict = df_bind[df_bind["Sheet_URL"] == user_sheet_name]
-                if not conflict.empty:
-                    owner_email = conflict.iloc[0]["Email"]
-                    if owner_email != email:
-                        owner_nickname = ""
-                        try:
-                            o_row = df_users[df_users["Email"] == owner_email]
-                            if not o_row.empty: owner_nickname = o_row.iloc[0]["Nickname"]
-                        except: pass
-                        display_name = owner_nickname if owner_nickname else mask_email(owner_email)
-                        return False, f"❌ 此帳本已被 **{display_name}** 綁定。請聯繫該擁有者邀請您加入 (勿重複註冊)。"
+            # 這裡只做寫入，因為 pre_check 已經檢查過了，但為了安全可以再擋一次
+            if not user_row.empty: return False, "帳號已存在"
 
             expire_date = today + timedelta(days=TRIAL_DAYS)
             final_nickname = nickname if nickname else email.split("@")[0]
@@ -350,7 +382,7 @@ def login_flow():
                         else: st.error(msg)
                     else: st.error("驗證碼錯誤或密碼為空")
 
-        # === 註冊 (含 OTP) ===
+        # === 註冊 (含 OTP 與 Pre-Check) ===
         elif st.session_state.login_mode == "register":
             if st.session_state.reg_stage == 1:
                 st.info("💡 新用戶請先設定您的記帳本 (需 Email 驗證)")
@@ -376,24 +408,23 @@ def login_flow():
                             st.error("❌ Email 格式不正確")
                         else:
                             st.cache_data.clear() # 清快取
-                            client = get_gspread_client()
-                            try:
-                                book = client.open_by_url(st.secrets["admin_sheet_url"])
-                                sheet = book.worksheet("Users")
-                                # 使用 find 檢查是否已存在 (精確比對)
-                                if sheet.find(email_in):
-                                    st.error("❌ 此 Email 已存在系統中。請直接「登入」，若要新增帳本，請登入後至「系統設定」綁定。")
-                                else:
-                                    code = ''.join(random.choices(string.digits, k=6))
-                                    st.session_state.otp_code = code
-                                    st.session_state.reg_data = {
-                                        "email": email_in, "pwd": pwd_in, "nick": nick_in, "sheet": sheet_in
-                                    }
-                                    with st.spinner("寄送驗證碼中..."):
-                                        ok, msg = send_otp_email(email_in, code, subject="【記帳本】註冊驗證碼")
-                                        if ok: st.session_state.reg_stage = 2; st.success("✅ 驗證碼已發送！"); time.sleep(1); st.rerun()
-                                        else: st.error(msg)
-                            except Exception as e: st.error(f"系統檢查失敗: {e}")
+                            # [修正點] 在這裡先執行 Pre-Check
+                            with st.spinner("檢查帳戶狀態中..."):
+                                is_valid, msg = validate_registration_pre_check(email_in, sheet_in)
+                            
+                            if not is_valid:
+                                st.error(msg) # 如果檢查失敗，直接顯示錯誤，不發送 OTP
+                            else:
+                                # 檢查通過，發送 OTP
+                                code = ''.join(random.choices(string.digits, k=6))
+                                st.session_state.otp_code = code
+                                st.session_state.reg_data = {
+                                    "email": email_in, "pwd": pwd_in, "nick": nick_in, "sheet": sheet_in
+                                }
+                                with st.spinner("寄送驗證碼中..."):
+                                    ok, msg = send_otp_email(email_in, code, subject="【記帳本】註冊驗證碼")
+                                    if ok: st.session_state.reg_stage = 2; st.success("✅ 驗證碼已發送！"); time.sleep(1); st.rerun()
+                                    else: st.error(msg)
                     else: st.warning("請填寫所有欄位")
             
             elif st.session_state.reg_stage == 2:
@@ -548,7 +579,6 @@ def calculate_exchange(amount, input_currency, target_currency, rates):
         return round(exchanged_amount, 2), conversion_factor
     except: return amount, 0
 
-# [修正] 將此函式移動到這裡 (定義在被呼叫之前)
 def check_and_run_recurring():
     if 'recurring_checked' in st.session_state: return 
     rec_df = get_data("Recurring", CURRENT_SHEET_SOURCE)
