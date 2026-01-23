@@ -153,6 +153,94 @@ def send_otp_email(to_email, code, subject="【記帳本】驗證碼"):
         return True, "驗證碼已發送"
     except Exception as e: return False, f"寄信失敗: {e}"
 
+# [新增] 發送邀請通知信
+def send_invitation_email(to_email, inviter_email, book_name):
+    if "email" not in st.secrets: return False, "尚未設定 Email Secrets"
+    
+    sender = st.secrets["email"]["sender"]
+    pwd = st.secrets["email"]["password"]
+    
+    subject = f"【我的記帳本】您收到來自 {inviter_email} 的共用邀請"
+    
+    body = f"""
+    您好！
+
+    使用者 {inviter_email} 邀請您共同管理記帳本：「{book_name}」。
+
+    --------------------------------------------------
+    👉 如果您已有帳號：
+    請直接登入 App，您將在「切換帳本」選單中看到此新帳本。
+
+    👉 如果您尚未註冊 / 初次使用：
+    您的帳號已預先建立。請前往 App 首頁：
+    1. 點擊「🔑 忘記密碼 / 啟用帳號」
+    2. 輸入您的 Email ({to_email}) 
+    3. 收取驗證碼並設定您的密碼與暱稱
+    --------------------------------------------------
+
+    祝記帳愉快！
+    """
+    
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = sender
+    msg['To'] = to_email
+    
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(sender, pwd)
+            server.sendmail(sender, to_email, msg.as_string())
+        return True, "邀請信已發送"
+    except Exception as e:
+        print(f"Mail Error: {e}")
+        return False, f"寄信失敗: {e}"
+
+# [修改] 新增綁定函式 (加入寄信邏輯)
+def add_binding(target_email, sheet_url, book_name, role="Member", operator_email=None):
+    client = get_gspread_client()
+    try:
+        admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
+        users_sheet = admin_book.worksheet("Users")
+        bindings_sheet = admin_book.worksheet("Book_Bindings")
+        
+        # 1. 檢查使用者是否存在，不存在則建立 Pending 帳號
+        try: cell = users_sheet.find(target_email)
+        except: cell = None
+
+        if not cell:
+            today = str(datetime.now().date())
+            # 建立空帳號，密碼設為 RESET_REQUIRED
+            row = [target_email, "", today, "RESET_REQUIRED", "Pending", today, "Trial", target_email.split("@")[0]]
+            users_sheet.append_row(row)
+        
+        # 2. 檢查是否已經綁定
+        existing = bindings_sheet.get_all_records()
+        df = pd.DataFrame(existing)
+        if not df.empty:
+            check = df[(df["Email"] == target_email) & (df["Sheet_URL"] == sheet_url)]
+            if not check.empty: return True, "使用者已在此帳本中"
+        
+        # 3. 檢查 Owner 唯一性
+        if role == "Owner":
+            if not df.empty:
+                owner_check = df[(df["Sheet_URL"] == sheet_url) & (df["Role"] == "Owner")]
+                if not owner_check.empty: return False, "❌ 此帳本已經有擁有者"
+
+        # 4. 寫入綁定
+        bindings_sheet.append_row([target_email, sheet_url, book_name, role])
+        
+        # 5. 寫入 Log
+        op = operator_email if operator_email else "System"
+        action = "新增綁定" if role == "Owner" else "邀請成員"
+        write_system_log(op, action, target_email, book_name, sheet_url)
+        
+        # 6. [新增] 如果是邀請成員 (非 Owner 自己新增)，發送通知信
+        if role == "Member" and operator_email:
+            send_invitation_email(target_email, operator_email, book_name)
+        
+        return True, "操作成功！(已發送通知信)"
+    except Exception as e: return False, f"Error: {e}"
+
 def reset_user_password(email, new_password, new_nickname=None):
     """重設密碼，並處理試用期重置與暱稱更新"""
     client = get_gspread_client()
