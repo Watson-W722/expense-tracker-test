@@ -28,7 +28,7 @@ st.markdown("""
         color: #2c3e50;
     }
     .block-container {
-        padding-top: 2rem !important;
+        padding-top: 4rem !important;
         padding-bottom: 5rem !important;
     }
     #MainMenu {visibility: hidden;}
@@ -83,18 +83,13 @@ st.markdown("""
         color: #0d6efd !important;
         border-top: 3px solid #0d6efd;
     }
-    .login-container {
-        max-width: 600px;
-        margin: 50px auto;
-        padding: 40px;
-        background: white;
-        border-radius: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        text-align: center;
-    }
+    .login-container { max-width: 500px; margin: 50px auto; padding: 40px; background: white; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }
     .step-text { text-align: left; margin-bottom: 10px; font-size: 0.95rem; }
+    .vip-badge { background-color: #FFD700; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; }
+    .trial-badge { background-color: #87CEEB; color: #000; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
+
 # ==========================================
 # 1. 核心連線模組 (含金鑰自動修復)
 # ==========================================
@@ -631,7 +626,6 @@ with c_logo:
     else: st.write("💰")
 with c_title:
     st.markdown("<h2 style='margin-bottom: 0; padding-top: 10px;'>我的記帳本</h2>", unsafe_allow_html=True)
-
 
 # --- 頁籤 ---
 tab1, tab2, tab3 = st.tabs(["📝 每日記帳", "📊 收支分析", "⚙️ 系統設定"])
