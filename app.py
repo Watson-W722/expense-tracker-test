@@ -153,21 +153,24 @@ def send_otp_email(to_email, code, subject="【記帳本】驗證碼"):
         return True, "驗證碼已發送"
     except Exception as e: return False, f"寄信失敗: {e}"
 
-# [新增] 發送邀請通知信函式
+# [修改] 發送邀請通知信函式 (已加入個資遮罩)
 def send_invitation_email(to_email, inviter_email, book_name):
-    # 1. 檢查 Secrets
-    if "email" not in st.secrets: 
-        return False, "Secrets 未設定 [email]"
+    if "email" not in st.secrets: return False, "尚未設定 Email Secrets"
     
     sender = st.secrets["email"]["sender"]
     pwd = st.secrets["email"]["password"]
     
-    # 2. 準備信件內容
-    subject = f"【我的記帳本】您收到來自 {inviter_email} 的共用邀請"
+    # --- 1. 先進行遮罩處理 ---
+    masked_inviter = mask_email(inviter_email) # 例如: wat***@gmail.com
+    masked_to = mask_email(to_email)           # 例如: bel***@gmail.com
+    
+    # --- 2. 標題與內容使用遮罩後的變數 ---
+    subject = f"【我的記帳本】您收到來自 {masked_inviter} 的共用邀請"
+    
     body = f"""
     您好！
 
-    使用者 {inviter_email} 邀請您共同管理記帳本：「{book_name}」。
+    使用者 {masked_inviter} 邀請您共同管理記帳本：「{book_name}」。
 
     --------------------------------------------------
     👉 如果您已有帳號：
@@ -176,7 +179,7 @@ def send_invitation_email(to_email, inviter_email, book_name):
     👉 如果您尚未註冊 / 初次使用：
     您的帳號已預先建立。請前往 App 首頁：
     1. 點擊「🔑 忘記密碼 / 啟用帳號」
-    2. 輸入您的 Email ({to_email}) 
+    2. 輸入您的 Email ({masked_to}) 
     3. 收取驗證碼並設定您的密碼與暱稱
     --------------------------------------------------
 
@@ -186,71 +189,16 @@ def send_invitation_email(to_email, inviter_email, book_name):
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From'] = sender
-    msg['To'] = to_email
+    msg['To'] = to_email # 這裡當然要是真實 Email 才能寄到
     
-    # 3. 嘗試連線並寄信
     try:
-        # 使用 SMTP_SSL (Port 465)
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(sender, pwd)
             server.sendmail(sender, to_email, msg.as_string())
-        return True, "發送成功"
+        return True, "邀請信已發送"
     except Exception as e:
-        # 回傳具體錯誤訊息
-        return False, f"SMTP 錯誤: {str(e)}"
-
-def add_binding(target_email, sheet_url, book_name, role="Member", operator_email=None):
-    client = get_gspread_client()
-    try:
-        admin_book = client.open_by_url(st.secrets["admin_sheet_url"])
-        users_sheet = admin_book.worksheet("Users")
-        bindings_sheet = admin_book.worksheet("Book_Bindings")
-        
-        # 1. 檢查使用者是否存在
-        try: cell = users_sheet.find(target_email)
-        except: cell = None
-
-        if not cell:
-            today = str(datetime.now().date())
-            row = [target_email, "", today, "RESET_REQUIRED", "Pending", today, "Trial", target_email.split("@")[0]]
-            users_sheet.append_row(row)
-        
-        # 2. 檢查是否已經綁定
-        existing = bindings_sheet.get_all_records()
-        df = pd.DataFrame(existing)
-        if not df.empty:
-            check = df[(df["Email"] == target_email) & (df["Sheet_URL"] == sheet_url)]
-            if not check.empty: return True, "使用者已在此帳本中"
-        
-        # 3. 檢查 Owner 唯一性
-        if role == "Owner":
-            if not df.empty:
-                owner_check = df[(df["Sheet_URL"] == sheet_url) & (df["Role"] == "Owner")]
-                if not owner_check.empty: return False, "❌ 此帳本已經有擁有者"
-
-        # 4. 寫入綁定
-        bindings_sheet.append_row([target_email, sheet_url, book_name, role])
-        
-        # 5. 寫入 Log
-        op = operator_email if operator_email else "System"
-        action = "新增綁定" if role == "Owner" else "邀請成員"
-        write_system_log(op, action, target_email, book_name, sheet_url)
-        
-        # 6. [修正重點] 檢查寄信結果
-        # 如果是邀請成員，嘗試寄信，並捕捉結果
-        mail_status_msg = ""
-        if role == "Member" and operator_email:
-            is_sent, mail_err = send_invitation_email(target_email, operator_email, book_name)
-            if is_sent:
-                mail_status_msg = "(已發送通知信)"
-            else:
-                # 如果寄信失敗，回傳 True (因為資料庫已綁定)，但附帶錯誤訊息
-                # 這裡會把具體的錯誤 (mail_err) 顯示給您看
-                return True, f"✅ 綁定成功，但 Email 發送失敗：{mail_err}"
-        
-        return True, f"操作成功！{mail_status_msg}"
-
-    except Exception as e: return False, f"Error: {e}"
+        print(f"Mail Error: {e}")
+        return False, f"寄信失敗: {e}"
 
 def reset_user_password(email, new_password, new_nickname=None):
     """重設密碼，並處理試用期重置與暱稱更新"""
