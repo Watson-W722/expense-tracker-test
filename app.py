@@ -974,6 +974,7 @@ with tab1:
         val, _ = calculate_exchange(a, c, default_currency_setting, rates)
         st.session_state.form_amount_def = val
 
+    user_today = today_date 
     # --- 修正後的 Dashboard 計算 ---
     df_all_raw = get_all_transactions(CURRENT_SHEET_SOURCE)
     total_inc = 0; total_exp = 0
