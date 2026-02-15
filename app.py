@@ -11,6 +11,7 @@ from email.mime.text import MIMEText
 import random
 import string
 import re
+import requests
 
 # --- 頁面設定 ---
 st.set_page_config(page_title="我的記帳本 Pro", layout="wide", page_icon="💰")
@@ -757,28 +758,57 @@ def get_user_date(offset_hours):
     tz = timezone(timedelta(hours=offset_hours))
     return datetime.now(tz).date()
 
+# --- 修改匯率抓取函式 ---
 @st.cache_data(ttl=3600)
 def get_exchange_rates():
     url = "https://rate.bot.com.tw/xrt?Lang=zh-TW"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
-        dfs = pd.read_html(url); df = dfs[0]; df = df.iloc[:, 0:5]
-        df.columns = ["Currency_Name", "Cash_Buy", "Cash_Sell", "Spot_Buy", "Spot_Sell"]
-        df["Currency"] = df["Currency_Name"].str.extract(r'\(([A-Z]+)\)')
-        rates = df.dropna(subset=['Currency']).copy()
-        rates["Spot_Sell"] = pd.to_numeric(rates["Spot_Sell"], errors='coerce')
-        rate_dict = rates.set_index("Currency")["Spot_Sell"].to_dict(); rate_dict["TWD"] = 1.0
-        return rate_dict
-    except: return {}
+        response = requests.get(url, headers=headers, timeout=10)
+        dfs = pd.read_html(response.text)
+        df = dfs[0]
+        
+        # 移除非必要的層級並重新命名欄位 (針對台銀網頁結構優化)
+        # 台銀表格通常第一欄是幣別，第13欄(索引12)左右是即期賣出
+        # 為了保險，我們抓取前幾欄並進行清理
+        res_df = df.iloc[:, [0, 12]].copy() # 0: 幣別, 12: 即期本行賣出
+        res_df.columns = ["Currency_Name", "Spot_Sell"]
+        
+        # 提取代碼如 USD, SGD
+        res_df["Currency"] = res_df["Currency_Name"].str.extract(r'\(([A-Z]+)\)')
+        res_df["Spot_Sell"] = pd.to_numeric(res_df["Spot_Sell"], errors='coerce')
+        
+        rates = res_df.dropna(subset=['Currency', 'Spot_Sell']).set_index("Currency")["Spot_Sell"].to_dict()
+        rates["TWD"] = 1.0
+        
+        # 存入抓取時間
+        fetch_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return rates, fetch_time
+    except Exception as e:
+        print(f"匯率抓取錯誤: {e}")
+        return {"TWD": 1.0}, "抓取失敗"
 
-def calculate_exchange(amount, input_currency, target_currency, rates):
-    if input_currency == target_currency: return amount, 1.0
+# --- 修改換算函式 ---
+def calculate_exchange(amount, input_currency, target_currency, rates_info):
+    rates, _ = rates_info # 拆解出匯率字典
+    if input_currency == target_currency: 
+        return amount, 1.0
+    
     try:
-        rate_in = rates.get(input_currency); rate_target = rates.get(target_currency)
-        if not rate_in or not rate_target: return amount, 0
+        # 如果匯率字典裡找不到該幣別，預設回傳 1 (避免變成 0 導致數據錯誤)
+        rate_in = rates.get(input_currency)
+        rate_target = rates.get(target_currency)
+        
+        if not rate_in or not rate_target:
+            return amount, 1.0 # 找不到匯率時保持原樣
+            
         conversion_factor = rate_in / rate_target
         exchanged_amount = amount * conversion_factor
         return round(exchanged_amount, 2), conversion_factor
-    except: return amount, 0
+    except:
+        return amount, 1.0
 
 def check_and_run_recurring():
     if 'recurring_checked' in st.session_state: return 
@@ -864,7 +894,9 @@ with st.sidebar:
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.query_params.clear(); st.rerun()
 
-rates = get_exchange_rates()
+# --- 在主程式邏輯中獲取匯率 (約在 460 行處) ---
+rates_data = get_exchange_rates() 
+rates = rates_data[0] # 為了相容你後面的程式碼，保留 rates 變數
 
 # --- 讀取設定 ---
 settings_df = get_data("Settings", CURRENT_SHEET_SOURCE)
@@ -1306,6 +1338,18 @@ with tab3:
         except: di = 0
         nd = st.selectbox("預設幣別", st.session_state.temp_curr_list, index=di, key="sel_def")
         if nd != st.session_state.temp_default_curr: st.session_state.temp_default_curr = nd; save_all_to_sheet(); st.toast("已更新")
+    
+    st.divider()
+    with st.expander("💱 當前匯率檢查 (來源：臺灣銀行)"):
+        current_rates, update_time = get_exchange_rates()
+        st.write(f"🕒 最後抓取時間：{update_time}")
+        
+        if len(current_rates) <= 1:
+            st.error("無法取得即時匯率，目前僅能使用台幣 (TWD)")
+        else:
+            # 轉換為 DataFrame 顯示
+            rate_display = pd.DataFrame(list(current_rates.items()), columns=['幣別', '匯率 (對台幣)'])
+            st.dataframe(rate_display, use_container_width=True, height=300)
     
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("💾 儲存所有設定", type="primary", use_container_width=True): save_all_to_sheet(); st.rerun()
